@@ -1,9 +1,30 @@
 # SUT — Shimano UART Tool
 
-SUT (Shimano UART Tool) is a Python tool for monitoring and analyzing Shimano e-bike UART traffic.
+SUT (Shimano UART Tool) is a Python tool for monitoring and analyzing Shimano e-bike UART traffic using a raspberry pi.
 It can capture messages from Shimano components (battery, motor, display) and optionally send test data via a named pipe.
 
+<img src="./images/setup.jpg" alt="Raspberry pi connected to BT-E6000 PCB" width="300">
+
+
 ## Running the Tool
+Make sure your uart0 is enabled, and raspberry pi bt is not using it.
+
+/boot/firmware/config.txt
+```
+[all]
+enable_uart=1
+dtoverlay=disable-bt
+```
+Reboot after changes.
+
+```
+ls -l /dev/serial*
+```
+should return
+```
+/dev/serial0 -> ttyAMA0
+```
+Then you are good to go.
 
 Activate your Python environment and start the tool:
 
