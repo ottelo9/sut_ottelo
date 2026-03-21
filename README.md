@@ -5,6 +5,9 @@ It can capture messages from Shimano components (battery, motor, display) and op
 
 <img src="./images/setup.jpg" alt="Raspberry pi connected to BT-E6000 PCB" width="300">
 
+## FYI
+The tool currently on master does not react well to automated testing.  
+I'm working on a fix to block the pipe until an answer is received or a timeout is reached, but for now the tool is stable for manual use only.
 
 ## Running the Tool
 Make sure your uart0 is enabled, and raspberry pi bt is not using it.
