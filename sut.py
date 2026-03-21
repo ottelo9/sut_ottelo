@@ -143,7 +143,7 @@ try:
                     handle_result(result, pending_tx.pop())
                 
                 # There was a tx without rx, log it without rx.
-                while(pending_tx.count() > 0):
+                while len(pending_tx) > 0:
                     logger.log(tx=pending_tx.pop(), rx=None, notes="NO_REPLY")
 
             elif fd == pipe_fd:
