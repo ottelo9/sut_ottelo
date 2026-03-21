@@ -49,7 +49,7 @@ The tool takes care of creating the named pipe, so make sure it is running.
 Send a test message to the pipe:
 
 ```bash
-echo -ne '\x42\x00' > /tmp/sut_pipe
+echo -ne '\x00\x42\x00' > /tmp/sut_pipe
 ```
 Expected tool output:
 ```

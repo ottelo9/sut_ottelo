@@ -60,6 +60,7 @@ def handle_rx_result(result, tx: str):
     kind = result[0]
     rx = None
     
+    tx_formated = " ".join(f"{b:02X}" for b in tx)
     if kind == "OK":
         _, msg = result
         rx = " ".join(f"{b:02X}" for b in msg)
@@ -75,7 +76,7 @@ def handle_rx_result(result, tx: str):
         rx = " ".join(f"{b:02X}" for b in msg)
         print(f"{YELLOW}R: INCOMPLETE {rx}{RESET}")
 
-    logger.log(tx=tx, rx=rx, notes=kind)
+    logger.log(tx=tx_formated, rx=rx, notes=kind)
 
 # Open serial
 try:
@@ -91,7 +92,7 @@ pipe_fd = os.open(PIPE, os.O_RDONLY | os.O_NONBLOCK)
 # Open a write end in the same process to prevent EOF
 dummy_w_fd = os.open(PIPE, os.O_WRONLY | os.O_NONBLOCK)
 
-TX_TIMEOUT = 0.5
+TX_TIMEOUT = 1
 
 class TxState(Enum):
     IDLE = 0
@@ -133,10 +134,15 @@ try:
             print("S:", formatted)
             tx_start_time = time.time()
             tx_state = TxState.WAIT_RX
+            time.sleep(0.5) # just to make sure the RX is complete. Parser doesn't handle incomplete data well right now... well, not at all right now.
 
         # --- timeout handling ---
         if tx_state == TxState.WAIT_RX and (now - tx_start_time) > TX_TIMEOUT:
-            logger.log(tx=current_tx, rx=None, notes="NO_REPLY")
+            # Format bytes as hex string
+            formatted = " ".join(f"{b:02X}" for b in current_tx)
+            # Print with prefix
+            logger.log(tx=formatted, rx=None, notes="NO_REPLY")
+            print("R:")
             tx_state = TxState.IDLE
             current_tx = None
 

@@ -29,15 +29,15 @@ send_payload() {
         printf "\\$(printf '%03o' "$b")" >&3
     done
     echo "$hex_str"
-    sleep 0.5
+    sleep 1
 }
 
-send_payload 0x42 0
+send_payload 0 0x42 0
 
 # Example usage
 for i in {0..15}; do
     for j in {0..15}; do
-	payload=( $(((i << 4) + j)) 0 )  # Decimal bytes
+	payload=( 0 $(((i << 4) + j)) 0 )  # Decimal bytes
         send_payload "${payload[@]}"
     done
 done
