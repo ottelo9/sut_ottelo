@@ -1,3 +1,6 @@
+import time
+from logger import NDJSONLogger
+
 START_BYTE = 0x00
 
 STATE_WAIT_START = 0
