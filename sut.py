@@ -142,7 +142,9 @@ try:
                 for result in parser.feed(data):
                     handle_result(result, pending_tx.pop())
                 
-                pending_tx.clear() # There was a tx without rx, just clear it for now.
+                # There was a tx without rx, log it without rx.
+                while(pending_tx.count() > 0):
+                    logger.log(tx=pending_tx.pop(), rx=None, notes="NO_REPLY")
 
             elif fd == pipe_fd:
                 tx_result = handle_pipe_input(pipe_fd, ser)
