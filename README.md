@@ -7,7 +7,7 @@ It can capture messages from Shimano components (battery, motor, display) and op
 
 
 ## Running the Tool
-Make sure your uart0 is enabled, and raspberry pi bt is not using it.
+Make sure your uart0/serial0 is enabled, and raspberry pi bt is not using it.
 
 /boot/firmware/config.txt
 ```
@@ -60,6 +60,29 @@ S: — message sent to the bus
 R: — message received from the bus
 
 This acts as a simple sanity check to verify the tool is reading and sending messages correctly.
+
+## Loopback testing
+If you want to make sure everything on the pi side is up and running you can do a loopback test.
+
+Connect RX and TX on your pi together
+
+<img src="./images/loopback_pi.jpg" alt="Raspberry pi loopback" width="300">
+
+Run the tool, pipe in the command as described above.
+
+Expected tool output:
+```
+S: 00 42 00 91 7A
+R: 00 42 00 91 7A
+```
+
+Please make sure to not include this loopback test in your logging data, either by manually removing it from the days data file, or disabling logging in config.json before starting the tool with:
+
+```
+{
+    "logger": false
+}
+```
 
 ## Colored Output
 
