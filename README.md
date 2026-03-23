@@ -9,6 +9,29 @@ It can capture messages from Shimano components (battery, motor, display) and op
 ## Running the Tool
 Make sure your uart0/serial0 is enabled, and raspberry pi bt is not using it.
 
+```
+systemctl is-enabled serial-getty@ttyAMA0.service
+systemctl is-active serial-getty@ttyAMA0.service
+```
+
+should return
+>disabled  
+>inactive
+
+if not use 
+
+```
+sudo raspi-config
+```
+and select
+
+>3\. Interface Options  
+>I6. Serial Port  
+>=> Would you like a login shell to be accessible over serial  
+>NO  
+>=> Would you like the serial port hardware to be enabled  
+>YES  
+
 /boot/firmware/config.txt
 ```
 [all]
