@@ -20,6 +20,7 @@ SELECT * FROM SplitCTE;
 /*Trying to figure out when byte 17 is E3*/
 -- I now thinkg byte 16 shows MAX temperature, and 17 shows average. 
 -- I think the MAX calculation ignores outlandish temperatures (like 433°c) but AVG doesn't
+-- Additionally 433 doesn't fit in a byte, so perhaps that's why MAX ignores it.
 -- So the disconnected TH003 showed very high, 433 to get average E3.
 /*
 SELECT DISTINCT intent, rx_parts[17] FROM rx_split WHERE rx_parts[17] = 'E3';
