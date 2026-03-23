@@ -72,6 +72,7 @@ class NDJSONLogger:
             "src": self.src,
             "t": datetime.now(timezone.utc).isoformat() + "Z",
             "dev": self.dev,
+            "intent": self.intent,
             "tx": tx,
             "rx": rx,
         }
