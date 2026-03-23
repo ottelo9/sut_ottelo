@@ -1,7 +1,8 @@
 {
     "logger": {
         "source": "mvg",
-        "device": "BT-E6000-A",
+        "device": "BT-E6000",
+        "intent": "Identify TH-002",
         "buffer_size": 100,
         "fsync": false
     }

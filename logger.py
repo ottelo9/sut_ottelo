@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone
 
 class NDJSONLogger:
-    def __init__(self, src="NA", dev=None, base_path="data", buffer_size=100, fsync=False, config:dict=None):
+    def __init__(self, src="NA", dev=None, intent=None, base_path="data", buffer_size=100, fsync=False, config:dict=None):
         self.base_path = base_path
         self.buffer = []
         self.buffer_size = buffer_size
@@ -12,6 +12,7 @@ class NDJSONLogger:
         self.current_date = None
         self.src = src
         self.dev = dev
+        self.intent = intent
 
         # Override with config file if provided
         if config:
@@ -28,6 +29,8 @@ class NDJSONLogger:
             self.src = config["source"]
         if "device" in config:
             self.dev = config["device"]
+        if "intent" in config:
+            self.dev = config["intent"]
         if "buffer_size" in config:
             self.buffer_size = config["buffer_size"]
         if "fsync" in config:
