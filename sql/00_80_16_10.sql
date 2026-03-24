@@ -1,5 +1,5 @@
 -- Making sense of the data with duckdb
--- duckdb :memory: -f sql/temperature.sql
+-- duckdb :memory: -f sql/00_80_16_10.sql
 
 -- Install the JSON extension (only needed once per database)
 INSTALL json;
@@ -11,6 +11,7 @@ CREATE TEMPORARY TABLE rx_split AS
 WITH SplitCTE AS (
     SELECT
         *,
+        STRING_SPLIT(tx, ' ') AS tx_parts,
         STRING_SPLIT(rx, ' ') AS rx_parts
     FROM read_ndjson_auto('./data/**/*.ndjson')
     WHERE rx LIKE '00 80 16 10 %'
@@ -38,12 +39,18 @@ SELECT * FROM rx_split where rx_parts[5] = '35';
 SELECT DISTINCT intent, rx_parts[7], rx_parts[8], rx_parts[9] FROM rx_split ORDER BY rx_split.t;
 */
 
+SELECT tx_parts, rx_parts FROM rx_split ORDER BY t DESC LIMIT 10;
+
 SELECT DISTINCT rx_parts[19] FROM rx_split;
 SELECT DISTINCT rx_parts[20] FROM rx_split;
 SELECT DISTINCT rx_parts[21],rx_parts[22],rx_parts[23],rx_parts[24],rx_parts[25] FROM rx_split;
 
 SELECT
     intent,
+    /*
+    rx_parts[1] AS 'Delimiter', -- 0x00
+    rx_parts[2] AS 'Header | Seq'
+    */
     rx_parts[3] AS 'Length',
     /*
     rx_parts[4] AS 'Type',

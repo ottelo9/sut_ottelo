@@ -57,3 +57,6 @@ done
 
 # Close fd
 exec 3>&-
+
+
+# https://api.si.shimano.com/api/public/v1/error/errorsets/STP0A
