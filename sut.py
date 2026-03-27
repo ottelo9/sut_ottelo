@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import serial
+import subprocess
 import crcmod.predefined
 import os
 import select
@@ -47,7 +48,32 @@ def make_logger(config_section: dict | bool | None) -> NDJSONLogger | None:
         return None
     return NDJSONLogger(config=config_section)
 
+def disable_tx_pin(gpio: int):
+    """Set TX GPIO pin to input (high-impedance) so it doesn't drive the bus."""
+    g = str(gpio)
+    for cmd in [['pinctrl', 'set', g, 'ip'], ['raspi-gpio', 'set', g, 'ip']]:
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+            print(f"TX pin GPIO{g} disabled via {cmd[0]} (input mode)")
+            return
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            pass
+    # sysfs fallback
+    try:
+        gpio_path = f'/sys/class/gpio/gpio{g}'
+        if not os.path.exists(gpio_path):
+            with open('/sys/class/gpio/export', 'w') as f:
+                f.write(g)
+        with open(f'{gpio_path}/direction', 'w') as f:
+            f.write('in')
+        print(f"TX pin GPIO{g} disabled via sysfs (input mode)")
+        return
+    except OSError:
+        pass
+    print(f"WARNING: Could not disable TX pin GPIO{g} - disconnect TX manually")
+
 config = Config("config.json")
+uart_config = config.get_section("uart") or {}
 logger = make_logger(config.get_section("logger"))
 parser = UARTParser(crc16_func, MSG_TIMEOUT)
 
@@ -88,7 +114,11 @@ def handle_pipe_input(pipe_fd: int, ser: serial.Serial) -> str:
         crc = crc16_func(msg[1:])
         msg += bytes([crc & 0xFF, (crc >> 8) & 0xFF])
 
-        ser.write(msg)
+        if tx_enabled:
+            ser.write(msg)
+        else:
+            print(f"{YELLOW}TX disabled, message not sent{RESET}")
+            return None
 
         # Format bytes as hex string
         formatted = " ".join(f"{b:02X}" for b in msg)
@@ -120,7 +150,16 @@ def handle_pipe_input(pipe_fd: int, ser: serial.Serial) -> str:
         traceback.print_exc()
 
 # Open serial
-ser = serial.Serial(DEVICE, BAUD, bytesize=8, parity='N', stopbits=1, timeout=0.1)
+ser = serial.Serial(
+    uart_config.get("port", DEVICE),
+    uart_config.get("baud", BAUD),
+    bytesize=8, parity='N', stopbits=1, timeout=0.1
+)
+
+# Disable TX pin if configured
+tx_enabled = uart_config.get("tx_enabled", True)
+if not tx_enabled:
+    disable_tx_pin(uart_config.get("tx_gpio", 14))
 
 # Open FIFO
 if not os.path.exists(PIPE):
@@ -140,11 +179,12 @@ try:
                     continue
 
                 for result in parser.feed(data):
-                    handle_result(result, pending_tx.pop())
-                
+                    tx = pending_tx.pop(0) if pending_tx else None
+                    handle_result(result, tx)
+
                 # There was a tx without rx, log it without rx.
-                while(pending_tx.count() > 0):
-                    logger.log(tx=pending_tx.pop(), rx=None, notes="NO_REPLY")
+                while len(pending_tx) > 0:
+                    logger.log(tx=pending_tx.pop(0), rx=None, notes="NO_REPLY")
 
             elif fd == pipe_fd:
                 tx_result = handle_pipe_input(pipe_fd, ser)
@@ -152,7 +192,7 @@ try:
                     pending_tx.append(tx_result)
 
 except KeyboardInterrupt:
-    print("\nExiting…")
+    print("\nExiting\u2026")
 finally:
     ser.close()
     os.close(pipe_fd)
