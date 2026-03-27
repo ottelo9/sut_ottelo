@@ -1,4 +1,10 @@
 {
+    "uart": {
+        "port": "/dev/serial0",
+        "baud": 9600,
+        "tx_enabled": false,
+        "tx_gpio": 14
+    },
     "logger": {
         "source": "NA",
         "device": "BT-E6000",
