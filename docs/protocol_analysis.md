@@ -5,6 +5,92 @@
 Analysis of the UART communication between a Shimano EC-E6002 charger and BT-E6000 battery (36V, 10S Li-Ion, 418Wh).
 Data captured using dual-channel sniffing on a Raspberry Pi — hardware UART on GPIO15 (battery) and pigpio bit-bang serial on GPIO14 (charger).
 
+## Log data
+```
+ottelo@raspberrypi:~/sut_ottelo $ ./run.sh
+Activating venv
+Start tool
+================
+Logging enabled for device BT-E6000 from source ott: battery-charger-test
+/dev/serial0,9600,8,N,1,0.1
+pigpiod not running, starting it...
+PigpioUART: GPIO14 opened as bit-bang serial RX @ 9600 baud
+R: 00 C1 00 35 DC
+R2: 00 41 00 F9 50
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 80 16 10 00 00 00 00 00 56 95 E0 1D DC 1D 16 15 16 3D 00 00 00 00 00 00 7E 85
+R2: 00 01 05 10 00 00 00 00 62 B3
+R: 00 02 00 00 00
+R: 00 00 00 00 00
+R: 00 02 00 00 00
+R: 00 00 00 00 00
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00 00 00 87 F1
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 01 05 10 00 00 00 00 62 B3
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 01 05 10 00 00 00 00 62 B3
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 01 05 10 00 00 00 00 62 B3
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 01 05 10 00 00 00 00 62 B3
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+```
+
 ## Bus Topology
 
 Half-duplex UART bus at 9600 baud (8N1). Both devices share the bus but use separate TX/RX lines.
