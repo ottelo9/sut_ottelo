@@ -118,13 +118,23 @@ When `tx_enabled` is set to `false` in `config.json`, the tool uses both GPIO pi
 
 ### Setup
 
-Install and enable pigpio:
+pigpio is not available via apt on Raspberry Pi OS Bookworm. Install from source:
 
 ```bash
-sudo apt install pigpio
-sudo systemctl enable pigpiod
-sudo systemctl start pigpiod
+wget https://github.com/joan2937/pigpio/archive/refs/heads/master.zip
+unzip master.zip
+cd pigpio-master
+make
+sudo make install
 ```
+
+Start the daemon:
+
+```bash
+sudo pigpiod
+```
+
+To start pigpiod automatically on boot, add `sudo pigpiod` to `/etc/rc.local`.
 
 ### Config
 
@@ -155,6 +165,33 @@ If pigpio is not installed or pigpiod is not running, the tool falls back to sin
 
 Press Ctrl+C to exit.
 The tool will cleanly close the serial port and any open pipes.
+
+## Analyzing Data with DuckDB
+
+Logged data (NDJSON files in `data/`) can be queried with DuckDB.
+
+### Installing DuckDB from source
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git g++ cmake ninja-build
+
+git clone https://github.com/duckdb/duckdb
+cd duckdb
+GEN=ninja BUILD_EXTENSIONS="icu;json" make
+```
+
+### Running DuckDB
+
+```bash
+build/release/duckdb
+```
+
+Example query on log data:
+
+```sql
+SELECT * FROM read_ndjson_auto('data/2026/03/28.ndjson');
+```
 
 ## Notes
 
