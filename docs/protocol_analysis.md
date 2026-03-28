@@ -1,4 +1,5 @@
 # Protocol Analysis: EC-E6002 Charger ↔ BT-E6000 Battery
+Generated via ClaudeAI  
 
 ## Overview
 
