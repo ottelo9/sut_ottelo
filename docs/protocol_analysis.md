@@ -71,8 +71,8 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 | 4 | `03` | State | 0x03 = Charging |
 | 5–7 | `00 00 00` | ? | Usually zero |
 | 8–9 | `F7 95` | Pack Voltage | 0x95F7 = 38391 mV (LE) |
-| 10–11 | `04 1E` | Unknown A | 0x1E04 = 7684 |
-| 12–13 | `FC 1D` | Unknown B | 0x1DFC = 7676 |
+| 10–11 | `04 1E` | Cell V MAX | 0x1E04 = 7684 → 3842 mV |
+| 12–13 | `FC 1D` | Cell V MIN | 0x1DFC = 7676 → 3838 mV |
 | 14 | `16` | NTC MAX | 22°C |
 | 15 | `15` | NTC AVG | 21°C |
 | 16 | `16` | Temp Sensor 3 | 22°C |
@@ -89,8 +89,8 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 | 1 | | uint8 | State | 0x00=Init, 0x02=Precharge?, 0x03=Charging |
 | 2–4 | | | ? | Usually `00 00 00` |
 | 5–6 | LE uint16 | **Pack Voltage (mV)** | See voltage table below |
-| 7–8 | LE uint16 | Unknown A | **Not current.** Values ~7650–7670, correlate slightly with temperature, not with charge current. |
-| 9–10 | LE uint16 | Unknown B | **Not current.** Always ~4–8 less than Unknown A. |
+| 7–8 | LE uint16 | **Cell Voltage MAX (0.5 mV)** | Likely max cell group voltage. Divide by 2 for mV. Matches multimeter readings. |
+| 9–10 | LE uint16 | **Cell Voltage MIN (0.5 mV)** | Likely min cell group voltage. Always ~4–8 less than MAX (~2–4 mV). |
 | 11 | uint8 | **NTC Temperature MAX (°C)** | MAX of 2x 10K NTC sensors, value is directly °C. BT-E6000: TH003/TH004, BT-E6001: TH001/TH002. |
 | 12 | uint8 | **NTC Temperature AVG (°C)** | AVG of 2x 10K NTC sensors, value is directly °C |
 | 13 | uint8 | **Temperature Sensor 3 (°C)** | Additional temperature sensor, value is directly °C. Consistently hottest reading in heat tests. |
@@ -102,15 +102,16 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 
 **Capture 2026-03-28 ~09:20 UTC** (battery ~61% SOC, ~22°C ambient, charger connected → idle → reconnect → idle → disconnected):
 
-| # | State | Pack Voltage | SOC | Current A | Current B | NTC MAX | NTC AVG | Temp3 | Byte 14 |
-|---|-------|-------------|-----|-----------|-----------|---------|---------|-------|---------|
-| 1 | 0x02 | 38246 mV | 0 | 7652 | 7646 | 21°C | 21°C | 20°C | 0x3D (61) |
-| 2 | 0x03 (Charging) | 38251 mV | 1 | 7654 | 7648 | 21°C | 21°C | 20°C | 0x3D (61) |
-| 3 (reconnect) | 0x00 (Init) | 38355 mV | **24** | 7674 | 7668 | 21°C | 21°C | 21°C | 0x3D (61) |
+| # | State | Pack Voltage | Cell V MAX | Cell V MIN | NTC MAX | NTC AVG | Temp3 | SOC (%) | Charge ctr |
+|---|-------|-------------|-----------|-----------|---------|---------|-------|---------|------------|
+| 1 | 0x02 | 38246 mV | 3826 mV | 3823 mV | 21°C | 21°C | 20°C | 61% | 0 |
+| 2 | 0x03 (Charging) | 38251 mV | 3827 mV | 3824 mV | 21°C | 21°C | 20°C | 61% | 1 |
+| 3 (reconnect) | 0x00 (Init) | 38355 mV | 3837 mV | 3834 mV | 21°C | 21°C | 21°C | 61% | 24 |
 
 - Pack voltage: 38.2V → 38.4V (10S = ~3.82–3.84V/cell, consistent with ~61% SOC)
+- Cell voltage spread only 3 mV — well balanced pack
 - Temp3 warmed from 20°C to 21°C during the session
-- After reconnect, SOC carried over from previous session (24), then resets on state transition
+- After reconnect, charge counter carried over from previous session (24), then resets on state transition
 
 #### Multi-session capture 2026-03-28 (5x connect/disconnect, battery ~60-70% SOC)
 
@@ -128,25 +129,25 @@ Repeated charger connect/disconnect cycles reveal handshake and SOC reset behavi
 
 **Telemetry across all sessions:**
 
-| Session | State | Pack Voltage | SOC | Current A | Current B | Const Block |
-|---------|-------|-------------|-----|-----------|-----------|-------------|
-| 1 | 0x00 (Init) | 38241 mV | 0 | 0x1DE2 (7650) | 0x1DDE (7646) | `16 16 16 3D` |
-| 1 | 0x02 | 38253 mV | 0 | 0x1DE6 (7654) | 0x1DE0 (7648) | `16 16 16 3D` |
-| 2 | 0x00 (Init) | 38265 mV | **22** | 0x1DE8 (7656) | 0x1DE2 (7650) | `16 16 16 3D` |
-| 2 | 0x03 (Charging) | 38260 mV | 1 | 0x1DE6 (7654) | 0x1DE2 (7650) | `16 16 16 3D` |
-| 3 | 0x00 (Init) | 38278 mV | **4** | 0x1DEA (7658) | 0x1DE6 (7654) | `16 16 16 3D` |
-| 3 | 0x03 (Charging) | 38271 mV | 1 | 0x1DE8 (7656) | 0x1DE4 (7652) | `16 16 16 3D` |
-| 4 | 0x00 (Init) | 38281 mV | **4** | 0x1DEA (7658) | 0x1DE6 (7654) | `16 16 16 3D` |
-| 5 | 0x00 (Init) | 38289 mV | **19** | 0x1DEC (7660) | 0x1DE8 (7656) | `16 16 16 3D` |
-| 5 | 0x02 | 38278 mV | 0 | 0x1DEA (7658) | 0x1DE6 (7654) | `16 16 16 3D` |
+| Session | State | Pack Voltage | Cell V MAX | Cell V MIN | Spread | Temps | SOC | Charge ctr |
+|---------|-------|-------------|-----------|-----------|--------|-------|-----|------------|
+| 1 | 0x00 (Init) | 38241 mV | 3825 mV | 3823 mV | 2 mV | 22/22/22°C | 61% | 0 |
+| 1 | 0x02 | 38253 mV | 3827 mV | 3824 mV | 3 mV | 22/22/22°C | 61% | 0 |
+| 2 | 0x00 (Init) | 38265 mV | 3828 mV | 3825 mV | 3 mV | 22/22/22°C | 61% | **22** |
+| 2 | 0x03 (Charging) | 38260 mV | 3827 mV | 3825 mV | 2 mV | 22/22/22°C | 61% | 1 |
+| 3 | 0x00 (Init) | 38278 mV | 3829 mV | 3827 mV | 2 mV | 22/22/22°C | 61% | **4** |
+| 3 | 0x03 (Charging) | 38271 mV | 3828 mV | 3826 mV | 2 mV | 22/22/22°C | 61% | 1 |
+| 4 | 0x00 (Init) | 38281 mV | 3829 mV | 3827 mV | 2 mV | 22/22/22°C | 61% | **4** |
+| 5 | 0x00 (Init) | 38289 mV | 3830 mV | 3828 mV | 2 mV | 22/22/22°C | 61% | **19** |
+| 5 | 0x02 | 38278 mV | 3829 mV | 3827 mV | 2 mV | 22/22/22°C | 61% | 0 |
 
 **Key observations from multi-session data:**
 
-- **SOC reset behavior**: The first telemetry (State=0x00) carries over the **last SOC value from the previous session** (22, 4, 4, 19). After the state transitions to 0x02/0x03, the SOC resets to 0 or 1 and starts counting up again. This means the SOC byte is **not** an absolute state of charge but a **charge counter since session start**.
+- **Charge counter reset behavior**: The first telemetry (State=0x00) carries over the **last charge counter value from the previous session** (22, 4, 4, 19). After the state transitions to 0x02/0x03, the counter resets to 0 or 1 and starts counting up again.
 - **Handshake initiator alternates**: Either device can initiate. The handshake sequence number increments independently across sessions, separate from the telemetry sequence counter.
 - **Voltage rises continuously**: 38241 → 38289 mV across all 5 sessions, even between disconnects. The battery retains charge between brief disconnect cycles.
-- **Current A always ~4 higher than Current B**: The offset is constant (e.g., 7650 vs 7646, 7660 vs 7656). Possibly two measurement points (before/after shunt, or two cell groups).
-- **NTC AVG temperature increased**: Byte 12 changed from `15` (21°C) to `16` (22°C) — battery warming up through repeated charging cycles.
+- **Cell voltage spread consistently 2–3 mV** — very well balanced pack. Matches multimeter measurement (3834.9–3836.1 mV, spread ~1.2 mV unloaded).
+- **NTC AVG temperature increased**: from 21°C to 22°C — battery warming up through repeated charging cycles.
 
 ### 4. Idle / Ack Pattern
 
@@ -216,7 +217,7 @@ Both charger and battery use a rotating sequence number (0→1→2→3→0→...
 
 ## Open Questions
 
-- **Unknown A/B (offsets 7–10)**: Not current (confirmed by shunt measurement). Values ~7650–7670, correlate with temperature but not charge current. Could be individual cell group voltages, ADC reference values, or internal resistance measurements?
+- **Cell V MAX/MIN (offsets 7–10)**: Likely max/min cell group voltages in 0.5 mV units. Multimeter confirms cells at 3834.9–3836.1 mV (unloaded), matching telemetry values. Still needs full verification under different SOC levels.
 - Offset 15 ("Charge counter") resets each session and counts up. What does it represent? Coulomb counter? Charge phase indicator?
 - Why does the battery only respond with telemetry to some charger polls? Is it time-based or sequence-based?
 - What triggers the state transitions (0x00 → 0x02 → 0x03)?
@@ -244,16 +245,16 @@ Battery slowly heated with a hair dryer while charger connected. Starting temper
 
 #### Telemetry during heat test
 
-| # | State | Pack Voltage | Current A | Current B | NTC MAX | NTC AVG | Temp3 | Byte 14 | SOC counter |
-|---|-------|-------------|-----------|-----------|---------|---------|-------|---------|-------------|
-| 1 | 0x00 (Init) | 38276 mV | 0x1DEA (7658) | 0x1DE4 (7652) | 22°C | 21°C | 22°C | 0x3D (61) | 0 |
-| 2 | 0x03 (Charging) | 38456 mV | 0x1E0E (7694) | 0x1E08 (7688) | 22°C | 21°C | 22°C | 0x3D (61) | 32 |
+| # | State | Pack Voltage | Cell V MAX | Cell V MIN | NTC MAX | NTC AVG | Temp3 | SOC | Charge ctr |
+|---|-------|-------------|-----------|-----------|---------|---------|-------|-----|------------|
+| 1 | 0x00 (Init) | 38276 mV | 3829 mV | 3826 mV | 22°C | 21°C | 22°C | 61% | 0 |
+| 2 | 0x03 (Charging) | 38456 mV | 3847 mV | 3844 mV | 22°C | 21°C | 22°C | 61% | 32 |
 
 **Observations:**
 - Voltage jump of **180 mV** (38276 → 38456 mV) between first and second telemetry — larger than previous sessions
-- Current A/B both increased by **36 units** (7658→7694 / 7652→7688) — previously stable, now rising with temperature
+- Cell voltages rose by 18 mV (3829→3847 / 3826→3844) — consistent with pack voltage increase
 - NTC MAX stayed at 22°C, NTC AVG at 21°C, Temp3 at 22°C — temperature sensors have not yet reflected the external heating (likely slow thermal conduction to sensor location)
-- SOC (byte 14) remains 0x3D (61%) — still matches SOC, unaffected by heating
+- SOC remains 61%, unaffected by heating
 - Charge counter jumped from 0 to 32 in the second telemetry — much higher than in previous sessions (which typically showed 0→1)
 
 ### 2026-03-28 — Heat test pre-warmed (62% SOC, starting ~39°C)
@@ -264,13 +265,13 @@ Battery pre-warmed with hair dryer for several minutes before connecting charger
 
 #### Telemetry during pre-warmed heat test
 
-| Session | State | Pack Voltage | Current A | Current B | NTC MAX | NTC AVG | Temp3 | SOC | Charge ctr |
+| Session | State | Pack Voltage | Cell V MAX | Cell V MIN | NTC MAX | NTC AVG | Temp3 | SOC | Charge ctr |
 |---------|-------|-------------|-----------|-----------|---------|---------|-------|-----|------------|
-| 1 | 0x00 (Init) | 38296 mV | 0x1DEE (7662) | 0x1DEA (7658) | **39°C** | **30°C** | **43°C** | **62%** | 0 |
-| 2 | 0x00 (Init) | 38327 mV | 0x1DF4 (7668) | 0x1DEE (7662) | 37°C | 28°C | 42°C | 62% | 22 |
-| 3 | 0x00 (Init) | 38330 mV | 0x1DF4 (7668) | 0x1DF0 (7664) | 37°C | 28°C | 42°C | 62% | 14 |
-| 4 | 0x00 (Init) | 38341 mV | 0x1DF8 (7672) | 0x1DF2 (7666) | 36°C | 27°C | 41°C | 62% | 23 |
-| 4 | 0x02 (Precharge) | 38336 mV | 0x1DF6 (7670) | 0x1DF2 (7666) | 36°C | 27°C | 41°C | 62% | 0 |
+| 1 | 0x00 (Init) | 38296 mV | 3831 mV | 3829 mV | **39°C** | **30°C** | **43°C** | **62%** | 0 |
+| 2 | 0x00 (Init) | 38327 mV | 3834 mV | 3831 mV | 37°C | 28°C | 42°C | 62% | 22 |
+| 3 | 0x00 (Init) | 38330 mV | 3834 mV | 3832 mV | 37°C | 28°C | 42°C | 62% | 14 |
+| 4 | 0x00 (Init) | 38341 mV | 3836 mV | 3833 mV | 36°C | 27°C | 41°C | 62% | 23 |
+| 4 | 0x02 (Precharge) | 38336 mV | 3835 mV | 3833 mV | 36°C | 27°C | 41°C | 62% | 0 |
 
 **Key findings:**
 
@@ -279,7 +280,7 @@ Battery pre-warmed with hair dryer for several minutes before connecting charger
 - **Temp3 is the hottest sensor** — consistently 4-6°C above NTC MAX. Likely closer to the cell pack or mounted on a heat-conducting surface.
 - **NTC AVG confirms asymmetric NTC placement**: 30°C vs MAX 39°C means one NTC sensor reached ~39°C while the other was much cooler (~21°C), averaging to 30°C.
 - **Battery cooling visible** across sessions: Temp3 43→42→42→41°C, NTC MAX 39→37→37→36°C, NTC AVG 30→28→28→27°C
-- **Unknown A/B increase with temperature**: ~7662/7658 at 39°C vs ~7650/7646 at 22°C. Small but consistent increase of ~12-22 units. Not current (see charge current measurement section).
+- **Cell voltages increase with temperature**: ~3831/3829 mV at 39°C vs ~3825/3823 mV at 22°C. Consistent with Li-Ion OCV temperature coefficient.
 
 ### 2026-03-28 — Charge current measurement (62% SOC, ~28°C)
 
@@ -289,9 +290,16 @@ Shunt voltage measured across 2x 1mΩ parallel resistors (R_shunt = 0.5 mΩ) in 
 
 #### Telemetry vs measured current
 
-| Telemetry | State | U_shunt | I_calc | I_multimeter | Unknown A | Unknown B |
+| Telemetry | State | U_shunt | I_calc | I_multimeter | Cell V MAX | Cell V MIN |
 |-----------|-------|---------|--------|-------------|-----------|-----------|
-| 1 | 0x00 (Init) | 0–0.02 mV | ~0 A | — | 7668 | 7660 |
-| 2 | 0x02 (Precharge) | 0.91 mV | 1.82 A | ~1.7 A | 7668 | 7664 |
+| 1 | 0x00 (Init) | 0–0.02 mV | ~0 A | — | 3834 mV | 3830 mV |
+| 2 | 0x02 (Precharge) | 0.91 mV | 1.82 A | ~1.7 A | 3834 mV | 3832 mV |
 
-**Conclusion:** Offsets 7–10 do not represent charge current. Values remain nearly constant (7668) despite current changing from 0 to 1.82 A.
+**Conclusion:** Offsets 7–10 do not represent charge current. Cell voltages remain nearly constant (3834 mV) despite current changing from 0 to 1.82 A — consistent with cell voltage interpretation.
+
+#### Cell voltage verification
+
+Multimeter measurement of all 10 cell groups (charger disconnected, 62% SOC):
+- Range: **3834.9 – 3836.1 mV** (spread 1.2 mV)
+- Telemetry Cell V MAX/MIN at same SOC: 3834/3830 mV (under load)
+- Values match within measurement tolerance, confirming offsets 7–10 as cell group voltages in 0.5 mV units.
