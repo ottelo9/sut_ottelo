@@ -187,10 +187,10 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 | 5–6 | LE uint16 | **Pack Voltage (mV)** | See voltage table below |
 | 7–8 | LE uint16 | Current A | Possibly discharge current |
 | 9–10 | LE uint16 | Current B | Possibly charge current |
-| 11 | uint8 | TH003/TH004 MAX | Temperature sensor (see notes) |
-| 12 | uint8 | TH003/TH004 AVG | Temperature sensor (see notes) |
-| 13 | uint8 | TH002 | Temperature sensor |
-| 14 | uint8 | Constant | Varies per session (0x36, 0x37, 0x3D) |
+| 11 | uint8 | **NTC Temperature MAX (°C)** | MAX of 2x 10K NTC sensors (TH003/TH004), value is directly °C |
+| 12 | uint8 | **NTC Temperature AVG (°C)** | AVG of 2x 10K NTC sensors (TH003/TH004), value is directly °C |
+| 13 | uint8 | **TH002 Temperature (°C)** | Third temperature sensor, value is directly °C |
+| 14 | uint8 | ? | Not temperature (values 0x36=54, 0x3D=61 too high for °C). Purpose unknown. |
 | 15 | uint8 | **SOC / Charge indicator** | Increases during charging |
 | 16–20 | | | Reserved | Always `00 00 00 00 00` |
 
@@ -249,7 +249,7 @@ Repeated charger connect/disconnect cycles reveal handshake and SOC reset behavi
 - **Handshake initiator alternates**: Either device can initiate. The handshake sequence number increments independently across sessions, separate from the telemetry sequence counter.
 - **Voltage rises continuously**: 38241 → 38289 mV across all 5 sessions, even between disconnects. The battery retains charge between brief disconnect cycles.
 - **Current A always ~4 higher than Current B**: The offset is constant (e.g., 7650 vs 7646, 7660 vs 7656). Possibly two measurement points (before/after shunt, or two cell groups).
-- **Constant block changed**: Byte 12 changed from `15` to `16` compared to the first capture — battery warming up through repeated charging cycles.
+- **NTC AVG temperature increased**: Byte 12 changed from `15` (21°C) to `16` (22°C) — battery warming up through repeated charging cycles.
 
 ### 6. Idle / Ack Pattern
 
@@ -270,19 +270,28 @@ State 0x02 (Precharge?) → Brief transition state
 State 0x03 (Charging)   → Steady state during active charging
 ```
 
-## Constant Block Variations
+## Temperature Sensors
 
-The 4-byte constant block at offsets 11–14 changes between sessions:
+The battery contains 2x 10K NTC temperature sensors. Values at offsets 11–13 are **directly in °C** — no scaling needed.
 
-| Date | Battery SOC | Constant Block | Last Byte |
-|------|-------------|---------------|-----------|
-| 2026-03-27 (session 1) | ~0% | `16 15 16 36` | 0x36 (54) |
-| 2026-03-27 (session 2) | ~0% | `16 15 16 36` / `37` | 0x36–0x37 |
-| 2026-03-28 (first capture) | ~60-70% | `16 15 16 3D` | 0x3D (61) |
-| 2026-03-28 (multi-session) | ~60-70% | `16 16 16 3D` | 0x3D (61) |
+| Offset | Field | Description |
+|--------|-------|-------------|
+| 11 | NTC MAX | Maximum of TH003 and TH004 readings |
+| 12 | NTC AVG | Average of TH003 and TH004 readings |
+| 13 | TH002 | Separate temperature sensor |
 
-- The last byte (offset 14) increases with SOC/temperature — possibly a temperature reading or battery state indicator.
-- Byte 12 changed from `15` to `16` during repeated charging, suggesting it tracks temperature (battery warming up).
+### Temperature observations across sessions
+
+| Date | NTC MAX | NTC AVG | TH002 | Byte 14 |
+|------|---------|---------|-------|---------|
+| 2026-03-27 (session 1) | 0x16 (22°C) | 0x15 (21°C) | 0x16 (22°C) | 0x36 (54) |
+| 2026-03-27 (session 2) | 0x16 (22°C) | 0x15 (21°C) | 0x16 (22°C) | 0x36–0x37 |
+| 2026-03-28 (first capture) | 0x16 (22°C) | 0x15 (21°C) | 0x16 (22°C) | 0x3D (61) |
+| 2026-03-28 (multi-session) | 0x16 (22°C) | 0x16 (22°C) | 0x16 (22°C) | 0x3D (61) |
+
+- NTC AVG increased from 21°C to 22°C during repeated charging cycles (battery warming up).
+- All three temperature fields are consistent with an ambient temperature of ~20-22°C.
+- **Byte 14 is NOT a temperature** — values of 54 and 61 are far too high for °C. Its purpose remains unknown.
 
 ## Sequence Number Rotation
 
@@ -292,7 +301,7 @@ Both charger and battery use a rotating sequence number (0→1→2→3→0→...
 
 - What do Current A and Current B represent exactly? Constant ~4 unit offset suggests two measurement points (before/after shunt? two cell groups?)
 - The SOC byte is not absolute SOC — it resets each session and counts up. What does it represent? Coulomb counter? Charge phase indicator?
-- What does the constant block represent? Bytes 11–13 likely temperature sensors (change with battery warming), byte 14 possibly SOC/temperature-dependent
+- What does byte 14 represent? Values 54–61, too high for °C, changes with SOC — possibly a battery state indicator or internal resistance metric?
 - Cmd 0x31 field mapping — which bytes encode capacity (425 ≈ 418Wh?), cycle count, cell config, etc.?
 - Why does the battery only respond with telemetry to some charger polls? Is it time-based or sequence-based?
 - What triggers the state transitions (0x00 → 0x02 → 0x03)?
