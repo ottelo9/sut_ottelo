@@ -148,16 +148,16 @@ State 0x03 (Charging)   → Steady state during active charging
 
 ## Temperature Sensors
 
-The battery contains 2x 10K NTC temperature sensors plus a third sensor. Values at offsets 11–13 are **directly in °C** — no scaling needed.
+The battery contains 2x 10K NTC temperature sensors plus a third sensor. Each NTC is connected to a separate GPIO on the battery's microcontroller. Values at offsets 11–13 are **directly in °C** — no scaling needed.
 
 Sensor designators vary by battery model:
-- **BT-E6000**: TH003, TH004 (NTC pair)
-- **BT-E6001**: TH001, TH002 (NTC pair)
+- **BT-E6000**: TH003, TH004 (NTC pair, separate GPIOs)
+- **BT-E6001**: TH001, TH002 (NTC pair, separate GPIOs)
 
 | Offset | Field | Description |
 |--------|-------|-------------|
-| 11 | NTC MAX | Maximum of the 2 NTC sensors |
-| 12 | NTC AVG | Average of the 2 NTC sensors |
+| 11 | NTC MAX | Maximum of the 2 individually read NTC sensors |
+| 12 | NTC AVG | Average of the 2 individually read NTC sensors |
 | 13 | Temp Sensor 3 | Additional sensor, consistently hottest in heat tests |
 
 ### Temperature observations across sessions
