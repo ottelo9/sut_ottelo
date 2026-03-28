@@ -117,7 +117,7 @@ Half-duplex UART bus at 9600 baud (8N1). Both devices share the bus but use sepa
 
 ### 1. Handshake
 
-When the charger is connected, the battery initiates with a ping:
+Either device can initiate the handshake. The handshake sequence number increments across sessions independently from the telemetry sequence number.
 
 ```
 Battery → 00 C1 00 35 DC       Ping (Sender=0xC0, Seq=1, Length=0, CRC valid)
@@ -215,6 +215,42 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 
 At 10S configuration: 38.2V = ~3.82V/cell, consistent with 60-70% SOC.
 
+#### Multi-session capture 2026-03-28 (5x connect/disconnect, battery ~60-70% SOC)
+
+Repeated charger connect/disconnect cycles reveal handshake and SOC reset behavior.
+
+**Handshake sequence across sessions:**
+
+| Session | Initiator | Seq | Handshake |
+|---------|-----------|-----|-----------|
+| 1 | Charger | 0 | `R2: 00 40 00 21 49` → `R: 00 C0 00 ED C5` |
+| 2 | Charger | 1 | `R2: 00 41 00 F9 50` → `R: 00 C1 00 35 DC` |
+| 3 | Battery | 0 | `R: 00 C0 00 ED C5` → `R2: 00 40 00 21 49` |
+| 4 | Battery | 1 | `R: 00 C1 00 35 DC` → `R2: 00 41 00 F9 50` |
+| 5 | Charger | 2 | `R2: 00 42 00 91 7A` → `R: 00 C2 00 5D F6` |
+
+**Telemetry across all sessions:**
+
+| Session | State | Pack Voltage | SOC | Current A | Current B | Const Block |
+|---------|-------|-------------|-----|-----------|-----------|-------------|
+| 1 | 0x00 (Init) | 38241 mV | 0 | 0x1DE2 (7650) | 0x1DDE (7646) | `16 16 16 3D` |
+| 1 | 0x02 | 38253 mV | 0 | 0x1DE6 (7654) | 0x1DE0 (7648) | `16 16 16 3D` |
+| 2 | 0x00 (Init) | 38265 mV | **22** | 0x1DE8 (7656) | 0x1DE2 (7650) | `16 16 16 3D` |
+| 2 | 0x03 (Charging) | 38260 mV | 1 | 0x1DE6 (7654) | 0x1DE2 (7650) | `16 16 16 3D` |
+| 3 | 0x00 (Init) | 38278 mV | **4** | 0x1DEA (7658) | 0x1DE6 (7654) | `16 16 16 3D` |
+| 3 | 0x03 (Charging) | 38271 mV | 1 | 0x1DE8 (7656) | 0x1DE4 (7652) | `16 16 16 3D` |
+| 4 | 0x00 (Init) | 38281 mV | **4** | 0x1DEA (7658) | 0x1DE6 (7654) | `16 16 16 3D` |
+| 5 | 0x00 (Init) | 38289 mV | **19** | 0x1DEC (7660) | 0x1DE8 (7656) | `16 16 16 3D` |
+| 5 | 0x02 | 38278 mV | 0 | 0x1DEA (7658) | 0x1DE6 (7654) | `16 16 16 3D` |
+
+**Key observations from multi-session data:**
+
+- **SOC reset behavior**: The first telemetry (State=0x00) carries over the **last SOC value from the previous session** (22, 4, 4, 19). After the state transitions to 0x02/0x03, the SOC resets to 0 or 1 and starts counting up again. This means the SOC byte is **not** an absolute state of charge but a **charge counter since session start**.
+- **Handshake initiator alternates**: Either device can initiate. The handshake sequence number increments independently across sessions, separate from the telemetry sequence counter.
+- **Voltage rises continuously**: 38241 → 38289 mV across all 5 sessions, even between disconnects. The battery retains charge between brief disconnect cycles.
+- **Current A always ~4 higher than Current B**: The offset is constant (e.g., 7650 vs 7646, 7660 vs 7656). Possibly two measurement points (before/after shunt, or two cell groups).
+- **Constant block changed**: Byte 12 changed from `15` to `16` compared to the first capture — battery warming up through repeated charging cycles.
+
 ### 6. Idle / Ack Pattern
 
 Between telemetry responses, the battery sends short ack pairs (Length=0, CRC=0x0000):
@@ -242,9 +278,11 @@ The 4-byte constant block at offsets 11–14 changes between sessions:
 |------|-------------|---------------|-----------|
 | 2026-03-27 (session 1) | ~0% | `16 15 16 36` | 0x36 (54) |
 | 2026-03-27 (session 2) | ~0% | `16 15 16 36` / `37` | 0x36–0x37 |
-| 2026-03-28 | ~60-70% | `16 15 16 3D` | 0x3D (61) |
+| 2026-03-28 (first capture) | ~60-70% | `16 15 16 3D` | 0x3D (61) |
+| 2026-03-28 (multi-session) | ~60-70% | `16 16 16 3D` | 0x3D (61) |
 
-The last byte increases with SOC/temperature — possibly a temperature reading or battery state indicator.
+- The last byte (offset 14) increases with SOC/temperature — possibly a temperature reading or battery state indicator.
+- Byte 12 changed from `15` to `16` during repeated charging, suggesting it tracks temperature (battery warming up).
 
 ## Sequence Number Rotation
 
@@ -252,9 +290,104 @@ Both charger and battery use a rotating sequence number (0→1→2→3→0→...
 
 ## Open Questions
 
-- What do Current A and Current B represent exactly? (Charge vs discharge? Two measurement points?)
-- What is the exact meaning of the SOC byte? (It doesn't map linearly to the LED display)
-- What does the constant block represent? (Temperature sensors? Configuration?)
-- Cmd 0x31 field mapping — which bytes encode capacity, cycle count, etc.?
-- Why does the battery only respond with telemetry to some charger polls?
+- What do Current A and Current B represent exactly? Constant ~4 unit offset suggests two measurement points (before/after shunt? two cell groups?)
+- The SOC byte is not absolute SOC — it resets each session and counts up. What does it represent? Coulomb counter? Charge phase indicator?
+- What does the constant block represent? Bytes 11–13 likely temperature sensors (change with battery warming), byte 14 possibly SOC/temperature-dependent
+- Cmd 0x31 field mapping — which bytes encode capacity (425 ≈ 418Wh?), cycle count, cell config, etc.?
+- Why does the battery only respond with telemetry to some charger polls? Is it time-based or sequence-based?
 - What triggers the state transitions (0x00 → 0x02 → 0x03)?
+- Cmd 0x30 payload differs between sessions — session token, nonce, or timestamp?
+
+## Raw Data
+
+### Multi-session capture 2026-03-28 (5x connect/disconnect)
+
+Battery ~60-70% SOC, 2 LEDs solid + 3rd blinking. EC-E6002 charger connected and disconnected 5 times.
+
+```
+R2: 00 40 00 21 49
+R: 00 C0 00 ED C5
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 83 16 10 00 00 00 00 00 61 95 E2 1D DE 1D 16 16 16 3D 00 00 00 00 00 00 10 19
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 02 00 00 00
+R: 00 00 00 00 00
+R: 00 81 16 10 00 02 00 00 00 6D 95 E6 1D E0 1D 16 16 16 3D 00 00 00 00 00 00 73 A1
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 41 00 F9 50
+R: 00 C1 00 35 DC
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 80 16 10 00 00 00 00 00 79 95 E8 1D E2 1D 16 16 16 3D 16 00 00 00 00 00 9F 7C
+R: 00 02 00 00 00
+R: 00 00 00 00 00
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 02 00 00 00
+R: 00 00 00 00 00
+R: 00 83 16 10 00 03 00 00 00 74 95 E6 1D E2 1D 16 16 16 3D 01 00 00 00 00 00 61 B1
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 C0 00 ED C5
+R2: 00 40 00 21 49
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 83 16 10 00 00 00 00 00 86 95 EA 1D E6 1D 16 16 16 3D 04 00 00 00 00 00 0E 99
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 02 00 00 00
+R: 00 00 00 00 00
+R: 00 81 16 10 00 03 00 00 00 7F 95 E8 1D E4 1D 16 16 16 3D 01 00 00 00 00 00 CF 2B
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 C1 00 35 DC
+R2: 00 41 00 F9 50
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 80 16 10 00 00 00 00 00 89 95 EA 1D E6 1D 16 16 16 3D 04 00 00 00 00 00 45 96
+R2: 00 01 05 10 00 00 00 00 62 B3
+R: 00 02 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 01 05 10 00 00 00 00 62 B3
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 42 00 91 7A
+R: 00 C2 00 5D F6
+R2: 00 01 05 10 00 00 00 00 62 B3
+R: 00 81 16 10 00 00 00 00 00 91 95 EC 1D E8 1D 16 16 16 3D 13 00 00 00 00 00 60 61
+R: 00 02 00 00 00
+R: 00 00 00 00 00
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 83 16 10 00 02 00 00 00 86 95 EA 1D E6 1D 16 16 16 3D 00 00 00 00 00 00 1F 3F
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+```
