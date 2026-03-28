@@ -1,96 +1,10 @@
 # Protocol Analysis: EC-E6002 Charger ↔ BT-E6000 Battery
-Generated via ClaudeAI  
+Generated via ClaudeAI
 
 ## Overview
 
 Analysis of the UART communication between a Shimano EC-E6002 charger and BT-E6000 battery (36V, 10S Li-Ion, 418Wh).
 Data captured using dual-channel sniffing on a Raspberry Pi — hardware UART on GPIO15 (battery) and pigpio bit-bang serial on GPIO14 (charger).
-
-## Log data
-```
-ottelo@raspberrypi:~/sut_ottelo $ ./run.sh
-Activating venv
-Start tool
-================
-Logging enabled for device BT-E6000 from source ott: battery-charger-test
-/dev/serial0,9600,8,N,1,0.1
-pigpiod not running, starting it...
-PigpioUART: GPIO14 opened as bit-bang serial RX @ 9600 baud
-R: 00 C1 00 35 DC
-R2: 00 41 00 F9 50
-R2: 00 00 05 10 00 00 00 00 B7 2C
-R: 00 80 16 10 00 00 00 00 00 56 95 E0 1D DC 1D 16 15 16 3D 00 00 00 00 00 00 7E 85
-R2: 00 01 05 10 00 00 00 00 62 B3
-R: 00 02 00 00 00
-R: 00 00 00 00 00
-R: 00 02 00 00 00
-R: 00 00 00 00 00
-R2: 00 03 05 10 00 00 00 00 D9 84
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R2: 00 00 05 10 00 00 00 00 B7 2C
-R: 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00 00 00 87 F1
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R2: 00 02 05 10 00 00 00 00 0C 1B
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R2: 00 03 05 10 00 00 00 00 D9 84
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R2: 00 01 05 10 00 00 00 00 62 B3
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R2: 00 03 05 10 00 00 00 00 D9 84
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R2: 00 01 05 10 00 00 00 00 62 B3
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R2: 00 02 05 10 00 00 00 00 0C 1B
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R2: 00 00 05 10 00 00 00 00 B7 2C
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R2: 00 02 05 10 00 00 00 00 0C 1B
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R2: 00 03 05 10 00 00 00 00 D9 84
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R2: 00 01 05 10 00 00 00 00 62 B3
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R2: 00 02 05 10 00 00 00 00 0C 1B
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R2: 00 00 05 10 00 00 00 00 B7 2C
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R2: 00 01 05 10 00 00 00 00 62 B3
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-R2: 00 03 05 10 00 00 00 00 D9 84
-R: 00 03 00 00 00
-R: 00 00 00 00 00
-```
 
 ## Bus Topology
 
@@ -124,38 +38,7 @@ Battery → 00 C1 00 35 DC       Ping (Sender=0xC0, Seq=1, Length=0, CRC valid)
 Charger → 00 41 00 F9 50       Pong (Sender=0x40, Seq=1, Length=0, CRC valid)
 ```
 
-### 2. Identification — Cmd 0x30 (Length=18)
-
-After handshake, the battery sends identification data. This message differs between sessions — likely contains a session token or nonce.
-
-```
-Session 1: 00 81 12 30 00 FB 05 A1 D1 AD 20 32 55 DF 91 30 7A 0C 8C 53 45 E0 E0
-Session 2: 00 80 12 30 00 5E D6 2D EE 79 04 15 10 19 A9 8E B2 EB 05 1E 63 C8 51
-```
-
-### 3. Battery Parameters — Cmd 0x31 (Length=18)
-
-Sent once after identification. Identical across sessions — static battery configuration data.
-
-```
-00 82 12 31 00 9F 01 A9 01 01 00 05 00 28 00 6E 00 D8 01 78 00 D0 FD
-```
-
-Payload (18 bytes after header+length):
-
-| Offset | Bytes | Decimal (LE) | Possible Meaning |
-|--------|-------|-------------|------------------|
-| 0–1 | `00 9F` | 159 | ? |
-| 2–3 | `01 A9` | 425 | Capacity? (~418Wh for BT-E6000) |
-| 4–5 | `01 01` | 257 | ? |
-| 6–7 | `00 05` | 5 | ? |
-| 8–9 | `00 28` | 40 | ? |
-| 10–11 | `00 6E` | 110 | ? |
-| 12–13 | `00 D8` | 216 | ? |
-| 14–15 | `01 78` | 376 | ? |
-| 16 | `00` | 0 | ? |
-
-### 4. Charger Poll — Cmd 0x10 (Length=5)
+### 2. Charger Poll — Cmd 0x10 (Length=5)
 
 The charger continuously polls the battery at ~1 second intervals, cycling through sequence numbers 0–3:
 
@@ -168,7 +51,7 @@ Charger → 00 03 05 10 00 00 00 00 D9 84    Seq=3
 
 Payload is always `10 00 00 00 00` — Cmd 0x10 followed by 4 zero bytes. The charger is a "dumb" power supply; all charging logic resides in the battery.
 
-### 5. Battery Telemetry Response — Cmd 0x10 (Length=22)
+### 3. Battery Telemetry Response — Cmd 0x10 (Length=22)
 
 The battery responds to charger polls with full telemetry data. Not every poll gets a telemetry response — on some polls only a short ack pair is sent.
 
@@ -196,24 +79,17 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 
 #### Voltage & SOC observations
 
-**Session 2026-03-27** (battery nearly empty, ~0% SOC):
+**Capture 2026-03-28 ~09:20 UTC** (battery ~61% SOC, ~22°C ambient, charger connected → idle → reconnect → idle → disconnected):
 
-| Time | Pack Voltage | SOC | State |
-|------|-------------|-----|-------|
-| 19:53:38 | 37441 mV (37.4V) | 0 | 0x00 (Init) |
-| 19:53:39 | 37450 mV | 1 | 0x02 |
-| 19:53:40 | 37450 mV | 2 | 0x03 (Charging) |
-| 19:54:00 | 37621 mV | 32 | 0x03 |
-| 19:54:15 | 37696 mV (37.7V) | 34 | 0x03 |
+| # | State | Pack Voltage | SOC | Current A | Current B | NTC MAX | NTC AVG | TH002 | Byte 14 |
+|---|-------|-------------|-----|-----------|-----------|---------|---------|-------|---------|
+| 1 | 0x02 | 38246 mV | 0 | 7652 | 7646 | 21°C | 21°C | 20°C | 0x3D (61) |
+| 2 | 0x03 (Charging) | 38251 mV | 1 | 7654 | 7648 | 21°C | 21°C | 20°C | 0x3D (61) |
+| 3 (reconnect) | 0x00 (Init) | 38355 mV | **24** | 7674 | 7668 | 21°C | 21°C | 21°C | 0x3D (61) |
 
-**Session 2026-03-28** (battery ~60-70% SOC, 2 LEDs solid + 3rd blinking):
-
-| Time | Pack Voltage | SOC | State |
-|------|-------------|-----|-------|
-| Start | 38230 mV (38.2V) | 0 | 0x00 (Init) |
-| +few sec | 38391 mV (38.4V) | 18 | 0x03 (Charging) |
-
-At 10S configuration: 38.2V = ~3.82V/cell, consistent with 60-70% SOC.
+- Pack voltage: 38.2V → 38.4V (10S = ~3.82–3.84V/cell, consistent with ~61% SOC)
+- TH002 warmed from 20°C to 21°C during the session
+- After reconnect, SOC carried over from previous session (24), then resets on state transition
 
 #### Multi-session capture 2026-03-28 (5x connect/disconnect, battery ~60-70% SOC)
 
@@ -251,7 +127,7 @@ Repeated charger connect/disconnect cycles reveal handshake and SOC reset behavi
 - **Current A always ~4 higher than Current B**: The offset is constant (e.g., 7650 vs 7646, 7660 vs 7656). Possibly two measurement points (before/after shunt, or two cell groups).
 - **NTC AVG temperature increased**: Byte 12 changed from `15` (21°C) to `16` (22°C) — battery warming up through repeated charging cycles.
 
-### 6. Idle / Ack Pattern
+### 4. Idle / Ack Pattern
 
 Between telemetry responses, the battery sends short ack pairs (Length=0, CRC=0x0000):
 
@@ -282,16 +158,15 @@ The battery contains 2x 10K NTC temperature sensors. Values at offsets 11–13 a
 
 ### Temperature observations across sessions
 
-| Date | NTC MAX | NTC AVG | TH002 | Byte 14 |
-|------|---------|---------|-------|---------|
-| 2026-03-27 (session 1) | 0x16 (22°C) | 0x15 (21°C) | 0x16 (22°C) | 0x36 (54) |
-| 2026-03-27 (session 2) | 0x16 (22°C) | 0x15 (21°C) | 0x16 (22°C) | 0x36–0x37 |
-| 2026-03-28 (first capture) | 0x16 (22°C) | 0x15 (21°C) | 0x16 (22°C) | 0x3D (61) |
-| 2026-03-28 (multi-session) | 0x16 (22°C) | 0x16 (22°C) | 0x16 (22°C) | 0x3D (61) |
+| Date / Capture | NTC MAX | NTC AVG | TH002 | Byte 14 |
+|----------------|---------|---------|-------|---------|
+| 2026-03-28 session start (61% SOC) | 0x15 (21°C) | 0x15 (21°C) | 0x14 (20°C) | 0x3D (61) |
+| 2026-03-28 after charging | 0x15 (21°C) | 0x15 (21°C) | 0x15 (21°C) | 0x3D (61) |
+| 2026-03-28 5x reconnect | 0x16 (22°C) | 0x16 (22°C) | 0x16 (22°C) | 0x3D (61) |
 
-- NTC AVG increased from 21°C to 22°C during repeated charging cycles (battery warming up).
+- TH002 warmed from 20°C to 21°C during a single session, then 22°C after repeated charging.
 - All three temperature fields are consistent with an ambient temperature of ~20-22°C.
-- **Byte 14 is NOT a temperature** — values of 54 and 61 are far too high for °C. Its purpose remains unknown.
+- **Byte 14 is NOT a temperature** — value 0x3D=61 is far too high for °C. Interestingly, 61 matches the battery SOC (61%). Needs further investigation.
 
 ## Sequence Number Rotation
 
@@ -299,19 +174,149 @@ Both charger and battery use a rotating sequence number (0→1→2→3→0→...
 
 ## Open Questions
 
-- What do Current A and Current B represent exactly? Constant ~4 unit offset suggests two measurement points (before/after shunt? two cell groups?)
-- The SOC byte is not absolute SOC — it resets each session and counts up. What does it represent? Coulomb counter? Charge phase indicator?
-- What does byte 14 represent? Values 54–61, too high for °C, changes with SOC — possibly a battery state indicator or internal resistance metric?
-- Cmd 0x31 field mapping — which bytes encode capacity (425 ≈ 418Wh?), cycle count, cell config, etc.?
+- What do Current A and Current B represent exactly? Constant ~4–6 unit offset suggests two measurement points (before/after shunt? two cell groups?)
+- Offset 15 ("SOC byte") is not absolute SOC — it resets each session and counts up. What does it represent? Coulomb counter? Charge phase indicator?
+- **Byte 14 (offset 14) = actual SOC?** Value 0x3D=61 matches the battery's reported 61% SOC exactly. Needs verification at different charge levels.
 - Why does the battery only respond with telemetry to some charger polls? Is it time-based or sequence-based?
 - What triggers the state transitions (0x00 → 0x02 → 0x03)?
-- Cmd 0x30 payload differs between sessions — session token, nonce, or timestamp?
 
-## Raw Data
+## Logs
 
-### Multi-session capture 2026-03-28 (5x connect/disconnect)
+### 2026-03-28 ~09:20 UTC — Charger session with reconnect (61% SOC, ~22°C)
 
-Battery ~60-70% SOC, 2 LEDs solid + 3rd blinking. EC-E6002 charger connected and disconnected 5 times.
+Battery at 61% SOC (2 LEDs solid, 3rd blinking). Charger connected, ran for ~2 minutes idle polling, disconnected and reconnected once, then disconnected.
+
+```
+R: 00 C1 00 35 DC
+R2: 00 41 00 F9 50
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 80 16 10 00 02 00 00 00 66 95 E4 1D DE 1D 15 15 14 3D 00 00 00 00 00 00 4E 57
+R: 00 02 00 00 00
+R: 00 00 00 00 00
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 82 16 10 00 03 00 00 00 6B 95 E6 1D E0 1D 15 15 14 3D 01 00 00 00 00 00 90 02
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 01 05 10 00 00 00 00 62 B3
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 01 05 10 00 00 00 00 62 B3
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 01 05 10 00 00 00 00 62 B3
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 01 05 10 00 00 00 00 62 B3
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 01 05 10 00 00 00 00 62 B3
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 00 05 10 00 00 00 00 B7 2C
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 43 00 49 63
+R: 00 C3 00 85 EF
+R2: 00 02 05 10 00 00 00 00 0C 1B
+R: 00 82 16 10 00 00 00 00 00 D3 95 FA 1D F4 1D 15 15 15 3D 18 00 00 00 00 00 FC C9
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 02 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 01 05 10 00 00 00 00 62 B3
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 03 05 10 00 00 00 00 D9 84
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R2: 00 01 05 10 00 00 00 00 62 B3
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+R: 00 03 00 00 00
+R: 00 00 00 00 00
+```
+
+### 2026-03-28 ~08:50 UTC — 5x connect/disconnect (~61% SOC)
+
+Battery ~60-70% SOC, 2 LEDs solid + 3rd blinking. EC-E6002 charger connected and disconnected 5 times rapidly.
 
 ```
 R2: 00 40 00 21 49
