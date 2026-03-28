@@ -91,7 +91,7 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 | 5–6 | LE uint16 | **Pack Voltage (mV)** | See voltage table below |
 | 7–8 | LE uint16 | **Cell Voltage MAX (0.5 mV)** | Likely max cell group voltage. Divide by 2 for mV. Matches multimeter readings. |
 | 9–10 | LE uint16 | **Cell Voltage MIN (0.5 mV)** | Likely min cell group voltage. Always ~4–8 less than MAX (~2–4 mV). |
-| 11 | uint8 | **NTC Temperature MAX (°C)** | MAX of 2x 10K NTC sensors, value is directly °C. BT-E6000: TH003/TH004, BT-E6001: TH001/TH002. |
+| 11 | uint8 | **NTC Temperature MAX (°C)** | MAX of 2x 10K NTC sensors, value is directly °C. BT-E6000: TH003/TH004, BT-E6001: TH001/TH002. See sensor table below. |
 | 12 | uint8 | **NTC Temperature AVG (°C)** | AVG of 2x 10K NTC sensors, value is directly °C |
 | 13 | uint8 | **TH002 Temperature (°C)** | MOSFET temperature sensor (mounted next to MOSFETs), value is directly °C. Consistently hottest reading in heat tests. |
 | 14 | uint8 | **SOC (%)** | **Confirmed**: actual state of charge percentage. Changed from 0x3D (61%) to 0x3E (62%) after charging. |
@@ -184,9 +184,12 @@ Measured externally via the battery's shunt resistors: 2x 1mΩ (SMD marking "1L0
 
 The battery contains 3 temperature sensors. Each NTC is connected to a separate GPIO on the battery's microcontroller. Values at offsets 11–13 are **directly in °C** — no scaling needed.
 
-NTC sensor designators vary by battery model:
-- **BT-E6000**: TH003, TH004 (NTC pair, separate GPIOs)
-- **BT-E6001**: TH001, TH002 (NTC pair, separate GPIOs)
+Sensor designators vary by battery model:
+
+| | NTC pair (cells) | MOSFET sensor |
+|---|---|---|
+| **BT-E6000** | TH003, TH004 | TH002 |
+| **BT-E6001** | TH001, TH002 | TH003 |
 
 | Offset | Field | Description |
 |--------|-------|-------------|
