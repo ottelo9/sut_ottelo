@@ -70,9 +70,9 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 | 5–6 | LE uint16 | **Pack Voltage (mV)** | See voltage table below |
 | 7–8 | LE uint16 | Current A | Possibly discharge current |
 | 9–10 | LE uint16 | Current B | Possibly charge current |
-| 11 | uint8 | **NTC Temperature MAX (°C)** | MAX of 2x 10K NTC sensors (TH003/TH004), value is directly °C |
-| 12 | uint8 | **NTC Temperature AVG (°C)** | AVG of 2x 10K NTC sensors (TH003/TH004), value is directly °C |
-| 13 | uint8 | **TH002 Temperature (°C)** | Third temperature sensor, value is directly °C |
+| 11 | uint8 | **NTC Temperature MAX (°C)** | MAX of 2x 10K NTC sensors, value is directly °C. BT-E6000: TH003/TH004, BT-E6001: TH001/TH002. |
+| 12 | uint8 | **NTC Temperature AVG (°C)** | AVG of 2x 10K NTC sensors, value is directly °C |
+| 13 | uint8 | **Temperature Sensor 3 (°C)** | Additional temperature sensor, value is directly °C. Consistently hottest reading in heat tests. |
 | 14 | uint8 | **SOC (%)** | **Confirmed**: actual state of charge percentage. Changed from 0x3D (61%) to 0x3E (62%) after charging. |
 | 15 | uint8 | Charge counter | Resets each session, counts up during charging. Not absolute SOC. |
 | 16–20 | | | Reserved | Always `00 00 00 00 00` |
@@ -81,14 +81,14 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 
 **Capture 2026-03-28 ~09:20 UTC** (battery ~61% SOC, ~22°C ambient, charger connected → idle → reconnect → idle → disconnected):
 
-| # | State | Pack Voltage | SOC | Current A | Current B | NTC MAX | NTC AVG | TH002 | Byte 14 |
+| # | State | Pack Voltage | SOC | Current A | Current B | NTC MAX | NTC AVG | Temp3 | Byte 14 |
 |---|-------|-------------|-----|-----------|-----------|---------|---------|-------|---------|
 | 1 | 0x02 | 38246 mV | 0 | 7652 | 7646 | 21°C | 21°C | 20°C | 0x3D (61) |
 | 2 | 0x03 (Charging) | 38251 mV | 1 | 7654 | 7648 | 21°C | 21°C | 20°C | 0x3D (61) |
 | 3 (reconnect) | 0x00 (Init) | 38355 mV | **24** | 7674 | 7668 | 21°C | 21°C | 21°C | 0x3D (61) |
 
 - Pack voltage: 38.2V → 38.4V (10S = ~3.82–3.84V/cell, consistent with ~61% SOC)
-- TH002 warmed from 20°C to 21°C during the session
+- Temp3 warmed from 20°C to 21°C during the session
 - After reconnect, SOC carried over from previous session (24), then resets on state transition
 
 #### Multi-session capture 2026-03-28 (5x connect/disconnect, battery ~60-70% SOC)
@@ -148,17 +148,21 @@ State 0x03 (Charging)   → Steady state during active charging
 
 ## Temperature Sensors
 
-The battery contains 2x 10K NTC temperature sensors. Values at offsets 11–13 are **directly in °C** — no scaling needed.
+The battery contains 2x 10K NTC temperature sensors plus a third sensor. Values at offsets 11–13 are **directly in °C** — no scaling needed.
+
+Sensor designators vary by battery model:
+- **BT-E6000**: TH003, TH004 (NTC pair)
+- **BT-E6001**: TH001, TH002 (NTC pair)
 
 | Offset | Field | Description |
 |--------|-------|-------------|
-| 11 | NTC MAX | Maximum of TH003 and TH004 readings |
-| 12 | NTC AVG | Average of TH003 and TH004 readings |
-| 13 | TH002 | Separate temperature sensor |
+| 11 | NTC MAX | Maximum of the 2 NTC sensors |
+| 12 | NTC AVG | Average of the 2 NTC sensors |
+| 13 | Temp Sensor 3 | Additional sensor, consistently hottest in heat tests |
 
 ### Temperature observations across sessions
 
-| Date / Capture | NTC MAX | NTC AVG | TH002 | SOC (Byte 14) |
+| Date / Capture | NTC MAX | NTC AVG | Temp3 | SOC (Byte 14) |
 |----------------|---------|---------|-------|---------------|
 | 2026-03-28 session start (61% SOC, cold) | 0x15 (21°C) | 0x15 (21°C) | 0x14 (20°C) | 0x3D (61%) |
 | 2026-03-28 after charging (cold) | 0x15 (21°C) | 0x15 (21°C) | 0x15 (21°C) | 0x3D (61%) |
@@ -168,9 +172,9 @@ The battery contains 2x 10K NTC temperature sensors. Values at offsets 11–13 a
 | heat test 2 — cooling | 0x25 (37°C) | 0x1C (28°C) | 0x2A (42°C) | 0x3E (62%) |
 | heat test 2 — further cooling | 0x24 (36°C) | 0x1B (27°C) | 0x29 (41°C) | 0x3E (62%) |
 
-- **TH002 is the hottest sensor** — 43°C vs NTC MAX 39°C. TH002 is likely closest to the cell pack or heat source.
+- **Temp3 is the hottest sensor** — 43°C vs NTC MAX 39°C. Temp3 is likely closest to the cell pack or heat source.
 - **NTC AVG lags significantly behind NTC MAX**: 30°C vs 39°C — confirms one NTC sensor heats faster than the other (asymmetric placement).
-- Temperatures **cool down across sessions** as the hair dryer was removed: 39→37→36 (MAX), 43→42→41 (TH002).
+- Temperatures **cool down across sessions** as the hair dryer was removed: 39→37→36 (MAX), 43→42→41 (Temp3).
 - At room temperature (~22°C), all three sensors read within 1-2°C of each other.
 
 ## Sequence Number Rotation
@@ -183,7 +187,7 @@ Both charger and battery use a rotating sequence number (0→1→2→3→0→...
 - Offset 15 ("Charge counter") resets each session and counts up. What does it represent? Coulomb counter? Charge phase indicator?
 - Why does the battery only respond with telemetry to some charger polls? Is it time-based or sequence-based?
 - What triggers the state transitions (0x00 → 0x02 → 0x03)?
-- Why is TH002 consistently hotter than NTC MAX? Is it measuring a different component (e.g., FET, BMS board)?
+- Why is Temp3 consistently hotter than NTC MAX? Is it measuring a different component (e.g., FET, BMS board)?
 
 ## Logs
 
@@ -207,7 +211,7 @@ Battery slowly heated with a hair dryer while charger connected. Starting temper
 
 #### Telemetry during heat test
 
-| # | State | Pack Voltage | Current A | Current B | NTC MAX | NTC AVG | TH002 | Byte 14 | SOC counter |
+| # | State | Pack Voltage | Current A | Current B | NTC MAX | NTC AVG | Temp3 | Byte 14 | SOC counter |
 |---|-------|-------------|-----------|-----------|---------|---------|-------|---------|-------------|
 | 1 | 0x00 (Init) | 38276 mV | 0x1DEA (7658) | 0x1DE4 (7652) | 22°C | 21°C | 22°C | 0x3D (61) | 0 |
 | 2 | 0x03 (Charging) | 38456 mV | 0x1E0E (7694) | 0x1E08 (7688) | 22°C | 21°C | 22°C | 0x3D (61) | 32 |
@@ -215,7 +219,7 @@ Battery slowly heated with a hair dryer while charger connected. Starting temper
 **Observations:**
 - Voltage jump of **180 mV** (38276 → 38456 mV) between first and second telemetry — larger than previous sessions
 - Current A/B both increased by **36 units** (7658→7694 / 7652→7688) — previously stable, now rising with temperature
-- NTC MAX stayed at 22°C, NTC AVG at 21°C, TH002 at 22°C — temperature sensors have not yet reflected the external heating (likely slow thermal conduction to sensor location)
+- NTC MAX stayed at 22°C, NTC AVG at 21°C, Temp3 at 22°C — temperature sensors have not yet reflected the external heating (likely slow thermal conduction to sensor location)
 - SOC (byte 14) remains 0x3D (61%) — still matches SOC, unaffected by heating
 - Charge counter jumped from 0 to 32 in the second telemetry — much higher than in previous sessions (which typically showed 0→1)
 
@@ -227,7 +231,7 @@ Battery pre-warmed with hair dryer for several minutes before connecting charger
 
 #### Telemetry during pre-warmed heat test
 
-| Session | State | Pack Voltage | Current A | Current B | NTC MAX | NTC AVG | TH002 | SOC | Charge ctr |
+| Session | State | Pack Voltage | Current A | Current B | NTC MAX | NTC AVG | Temp3 | SOC | Charge ctr |
 |---------|-------|-------------|-----------|-----------|---------|---------|-------|-----|------------|
 | 1 | 0x00 (Init) | 38296 mV | 0x1DEE (7662) | 0x1DEA (7658) | **39°C** | **30°C** | **43°C** | **62%** | 0 |
 | 2 | 0x00 (Init) | 38327 mV | 0x1DF4 (7668) | 0x1DEE (7662) | 37°C | 28°C | 42°C | 62% | 22 |
@@ -238,8 +242,8 @@ Battery pre-warmed with hair dryer for several minutes before connecting charger
 **Key findings:**
 
 - **SOC confirmed: Byte 14 = actual SOC percentage.** Changed from 0x3D (61%) in all previous cold captures to **0x3E (62%)** — the battery charged by 1% during the earlier sessions.
-- **Temperature sensors clearly respond to heating**: NTC MAX 39°C, NTC AVG 30°C, TH002 43°C (vs ~22°C at room temperature)
-- **TH002 is the hottest sensor** — consistently 4-6°C above NTC MAX. Likely closer to the cell pack or mounted on a heat-conducting surface.
+- **Temperature sensors clearly respond to heating**: NTC MAX 39°C, NTC AVG 30°C, Temp3 43°C (vs ~22°C at room temperature)
+- **Temp3 is the hottest sensor** — consistently 4-6°C above NTC MAX. Likely closer to the cell pack or mounted on a heat-conducting surface.
 - **NTC AVG confirms asymmetric NTC placement**: 30°C vs MAX 39°C means one NTC sensor reached ~39°C while the other was much cooler (~21°C), averaging to 30°C.
-- **Battery cooling visible** across sessions: TH002 43→42→42→41°C, NTC MAX 39→37→37→36°C, NTC AVG 30→28→28→27°C
+- **Battery cooling visible** across sessions: Temp3 43→42→42→41°C, NTC MAX 39→37→37→36°C, NTC AVG 30→28→28→27°C
 - **Current A/B increase with temperature**: ~7662/7658 at 39°C vs ~7650/7646 at 22°C. Small but consistent increase of ~12-22 units.
