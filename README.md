@@ -170,7 +170,17 @@ The tool will cleanly close the serial port and any open pipes.
 
 Logged data (NDJSON files in `data/`) can be queried with DuckDB.
 
-### Installing DuckDB from source
+### Installing DuckDB
+
+Download the prebuilt binary for Raspberry Pi (aarch64):
+
+```bash
+wget https://github.com/duckdb/duckdb/releases/latest/download/duckdb_cli-linux-arm64.zip
+unzip duckdb_cli-linux-arm64.zip
+sudo mv duckdb /usr/local/bin/
+```
+
+Alternatively, build from source:
 
 ```bash
 sudo apt-get update
@@ -179,18 +189,28 @@ sudo apt-get install -y git g++ cmake ninja-build
 git clone https://github.com/duckdb/duckdb
 cd duckdb
 GEN=ninja BUILD_EXTENSIONS="icu;json" make
+sudo mv build/release/duckdb /usr/local/bin/
 ```
 
-### Running DuckDB
+### Querying Log Data
+
+Run a predefined query:
 
 ```bash
-build/release/duckdb
+duckdb :memory: -f sql/charger_telemetry.sql
 ```
 
-Example query on log data:
+Available queries in `sql/`:
 
-```sql
-SELECT * FROM read_ndjson_auto('data/2026/03/28.ndjson');
+| File | Description |
+|------|-------------|
+| `00_80_16_10.sql` | PCB telemetry analysis (Cmd 0x10, Seq 0) |
+| `charger_telemetry.sql` | Charger/battery telemetry (all Cmd 0x10) |
+
+Or run an ad-hoc query:
+
+```bash
+duckdb :memory: -c "SELECT * FROM read_ndjson_auto('data/2026/03/28.ndjson') LIMIT 10;"
 ```
 
 ## Notes
