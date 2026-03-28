@@ -16,8 +16,7 @@ class PySerialUART(UARTInterface):
             stopbits = stopbits,
             timeout = timeout
         )
-        if not self.tx_enabled and self.tx_gpio is not None:
-            self._disable_tx_pin()
+        # TX pin is handled by PigpioUART when tx_enabled=false
 
     @classmethod
     def from_config(cls, config:dict=None):

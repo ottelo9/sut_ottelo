@@ -22,6 +22,7 @@ from message_dispatcher import MessageDirection, MessageDispatcher
 from mock_uart import MockUART
 from pipe_uart import PipeUART
 from pyserial_uart import PySerialUART
+from pigpio_uart import PigpioUART
 
 # ---------- CONFIG ----------
 DEVICE = "/dev/serial0"
@@ -114,6 +115,31 @@ def print_handler(msg: Msg, disp: MessageDispatcher, direction: MessageDirection
     if direction & MessageDirection.TX:
         print_message(f"{DIM}S: {msg}{RESET}")
 
+def print_handler_ch2(msg: Msg, disp: MessageDispatcher, direction: MessageDirection):
+    """Print messages from the second channel (TX pin as RX)."""
+    if direction & MessageDirection.RX:
+        print_rx_result_ch2(msg)
+
+def print_rx_result_ch2(msg: Msg):
+    """Print CH2 RX message to console with color based on status."""
+    CYAN = "\033[96m"
+    color = CYAN
+    message: str = ""
+
+    if msg.status == MsgStatus.OK:
+        message = f"{msg}"
+    elif msg.status == MsgStatus.INCOMPLETE:
+        color = YELLOW
+        message = f"INCOMPLETE {msg}"
+    elif msg.status == MsgStatus.CRC_ERROR:
+        color = RED
+        message = f"CRC ERROR {msg} ({msg.status_info})"
+    elif msg.status == MsgStatus.NA:
+        color = RED
+        message = f"NA {msg}"
+
+    print_message(f"{color}R2: {message}{RESET}")
+
 def log_handler(msg: Msg, disp: MessageDispatcher, direction: MessageDirection):
     """Log TX/RX pairs and manage TX queue."""
     global tx_queue, logger
@@ -125,6 +151,13 @@ def log_handler(msg: Msg, disp: MessageDispatcher, direction: MessageDirection):
         tx_msg = tx_queue.pop(msg.seq, None)
         if logger:
             logger.log(tx=f"{tx_msg}", rx=f"{msg}", notes=msg.status.name if msg.status else "")
+
+def log_handler_ch2(msg: Msg, disp: MessageDispatcher, direction: MessageDirection):
+    """Log messages from second channel."""
+    global logger
+    if direction & MessageDirection.RX:
+        if logger:
+            logger.log(tx=None, rx=f"{msg}", notes=f"CH2 {msg.status.name}" if msg.status else "CH2")
 
 def clean_tx_queue():
     """Remove TX messages older than TX_TIMEOUT."""
@@ -180,9 +213,10 @@ def main():
     config = Config("config.json")
     logger = make_logger(config.get_section("logger"))
 
-    # Open serial device
+    # Open serial device (CH1: hardware UART RX on GPIO15)
+    uart_config = config.get_section("uart") or {}
     try:
-        serial_uart = PySerialUART.from_config(config.get_section("uart"))
+        serial_uart = PySerialUART.from_config(uart_config)
         #serial_uart = MockUART()
     except Exception as e:
         print(f"{RED}Serial problem{RESET}")
@@ -193,6 +227,19 @@ def main():
     dispatcher.subscribe(None, print_handler, direction=MessageDirection.BOTH)
     dispatcher.subscribe(None, log_handler, direction=MessageDirection.BOTH)
     # dispatcher.subscribe(None, ping_handler, direction=MessageDirection.RX) # TODO: avoid infinite loop
+
+    # Open second channel (CH2: bit-bang RX on TX pin via pigpio)
+    ch2_dispatcher = None
+    if not uart_config.get("tx_enabled", True):
+        try:
+            ch2_uart = PigpioUART.from_config(uart_config)
+            ch2_dispatcher = MessageDispatcher(ch2_uart)
+            ch2_dispatcher.register_message_type(None, Msg)
+            ch2_dispatcher.subscribe(None, print_handler_ch2, direction=MessageDirection.RX)
+            ch2_dispatcher.subscribe(None, log_handler_ch2, direction=MessageDirection.RX)
+        except Exception as e:
+            print(f"{YELLOW}CH2 (pigpio) not available: {e}{RESET}")
+            print(f"{YELLOW}Install pigpio and start pigpiod for dual-channel sniffing{RESET}")
 
     # Open pipe
     try:
@@ -210,20 +257,24 @@ def main():
         print_prompt()  # print prompt again for next input
         while True:
             dispatcher.poll()
+            if ch2_dispatcher:
+                ch2_dispatcher.poll()
             pipe_dispatcher.poll()
             clean_tx_queue()
-            
+
             # Check for user input
             user_line = read_input_nonblocking()
             if user_line is not None:
                 handle_user_command(user_line, dispatcher)
-                
+
             time.sleep(0.01)  # prevent 100% CPU spin
     except KeyboardInterrupt:
         print("\nExiting…")
     finally:
         pipe_uart.close()
         serial_uart.close()
+        if ch2_dispatcher:
+            ch2_uart.close()
         if logger:
             logger.flush()
 
