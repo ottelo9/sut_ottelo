@@ -85,13 +85,16 @@ class Msg:
 
         received_crc = struct.unpack('<H', crc_bytes)[0]
         calculated_crc = Msg.crc_func(payload_bytes)
-        if received_crc is 0:
+        if received_crc == 0:
             received_crc = calculated_crc
         if received_crc != calculated_crc:
             return None, MsgStatus.CRC_ERROR
 
         values_bytes = payload_bytes[2:]  # skip header
-        values = struct.unpack(cls.FORMAT, values_bytes)
+        if cls.FORMAT:
+            values = struct.unpack(cls.FORMAT, values_bytes)
+        else:
+            values = ()
 
         obj = cls()
         for field, value in zip(cls.FIELDS, values):
