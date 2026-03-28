@@ -107,20 +107,57 @@ Please make sure to not include this loopback test in your logging data, either 
 }
 ```
 
+## Dual-Channel Sniffing
+
+When `tx_enabled` is set to `false` in `config.json`, the tool uses both GPIO pins as inputs to passively sniff both directions of the bus simultaneously:
+
+| Channel | Pin | Method | Output |
+|---------|-----|--------|--------|
+| CH1 | GPIO15 (RX) | Hardware UART `/dev/serial0` | `R:` (normal) |
+| CH2 | GPIO14 (TX) | pigpio bit-bang serial | `R2:` (cyan) |
+
+### Setup
+
+Install and enable pigpio:
+
+```bash
+sudo apt install pigpio
+sudo systemctl enable pigpiod
+sudo systemctl start pigpiod
+```
+
+### Config
+
+Set `tx_enabled` to `false` in `config.json` to activate dual-channel mode:
+
+```json
+{
+    "uart": {
+        "port": "/dev/serial0",
+        "baud": 9600,
+        "tx_enabled": false,
+        "tx_gpio": 14
+    }
+}
+```
+
+If pigpio is not installed or pigpiod is not running, the tool falls back to single-channel mode (CH1 only) with a warning.
+
 ## Colored Output
 
 |Color   |Meaning                    |
 |--------|---------------------------|
-|(normal)|Valid message received     |
+|(normal)|Valid message received (CH1)|
+|Cyan    |Valid message received (CH2)|
 |Yellow  |Incomplete message detected|
 |Red     |CRC error detected         |
 
 
-Press Ctrl+C to exit.  
+Press Ctrl+C to exit.
 The tool will cleanly close the serial port and any open pipes.
 
 ## Notes
 
-Requires Python 3.8+  
-CRC16 calculation and UART parsing are handled automatically  
-Currently only tested on BT_E6000  
+Requires Python 3.8+
+CRC16 calculation and UART parsing are handled automatically
+Currently only tested on BT-E6000
