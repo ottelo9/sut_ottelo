@@ -68,8 +68,8 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 | 1 | | uint8 | State | 0x00=Init, 0x02=Precharge?, 0x03=Charging |
 | 2–4 | | | ? | Usually `00 00 00` |
 | 5–6 | LE uint16 | **Pack Voltage (mV)** | See voltage table below |
-| 7–8 | LE uint16 | Current A | Possibly discharge current |
-| 9–10 | LE uint16 | Current B | Possibly charge current |
+| 7–8 | LE uint16 | Unknown A | **Not current.** Values ~7650–7670, correlate slightly with temperature, not with charge current. |
+| 9–10 | LE uint16 | Unknown B | **Not current.** Always ~4–8 less than Unknown A. |
 | 11 | uint8 | **NTC Temperature MAX (°C)** | MAX of 2x 10K NTC sensors, value is directly °C. BT-E6000: TH003/TH004, BT-E6001: TH001/TH002. |
 | 12 | uint8 | **NTC Temperature AVG (°C)** | AVG of 2x 10K NTC sensors, value is directly °C |
 | 13 | uint8 | **Temperature Sensor 3 (°C)** | Additional temperature sensor, value is directly °C. Consistently hottest reading in heat tests. |
@@ -146,6 +146,18 @@ State 0x02 (Precharge?) → Brief transition state
 State 0x03 (Charging)   → Steady state during active charging
 ```
 
+## Charge Current Measurement
+
+Measured externally via the battery's shunt resistors: 2x 1mΩ (SMD marking "1L00") in parallel, in series with GND → **R_shunt = 0.5 mΩ**.
+
+| Phase | U_shunt | Calculated I | Multimeter I |
+|-------|---------|-------------|-------------|
+| State 0x00 (Init) | 0–0.02 mV | ~0 A | — |
+| State 0x02 (Precharge) | 0.91 mV | 1.82 A | ~1.7 A |
+| Charging steady (~30s) | 0.95 mV | 1.9 A | — |
+
+**Charge current is NOT reported in the Cmd 0x10 telemetry.** No field correlates with the measured 1.7–1.9 A. This makes sense: the charger is a "dumb" power supply, and all charging logic resides in the battery BMS — it has no need to report the current back to the charger.
+
 ## Temperature Sensors
 
 The battery contains 2x 10K NTC temperature sensors plus a third sensor. Each NTC is connected to a separate GPIO on the battery's microcontroller. Values at offsets 11–13 are **directly in °C** — no scaling needed.
@@ -183,7 +195,7 @@ Both charger and battery use a rotating sequence number (0→1→2→3→0→...
 
 ## Open Questions
 
-- What do Current A and Current B represent exactly? Constant ~4–6 unit offset suggests two measurement points (before/after shunt? two cell groups?). Values increase with temperature (~7650 at 22°C → ~7672 at 36°C).
+- **Unknown A/B (offsets 7–10)**: Not current (confirmed by shunt measurement). Values ~7650–7670, correlate with temperature but not charge current. Could be individual cell group voltages, ADC reference values, or internal resistance measurements?
 - Offset 15 ("Charge counter") resets each session and counts up. What does it represent? Coulomb counter? Charge phase indicator?
 - Why does the battery only respond with telemetry to some charger polls? Is it time-based or sequence-based?
 - What triggers the state transitions (0x00 → 0x02 → 0x03)?
@@ -246,4 +258,19 @@ Battery pre-warmed with hair dryer for several minutes before connecting charger
 - **Temp3 is the hottest sensor** — consistently 4-6°C above NTC MAX. Likely closer to the cell pack or mounted on a heat-conducting surface.
 - **NTC AVG confirms asymmetric NTC placement**: 30°C vs MAX 39°C means one NTC sensor reached ~39°C while the other was much cooler (~21°C), averaging to 30°C.
 - **Battery cooling visible** across sessions: Temp3 43→42→42→41°C, NTC MAX 39→37→37→36°C, NTC AVG 30→28→28→27°C
-- **Current A/B increase with temperature**: ~7662/7658 at 39°C vs ~7650/7646 at 22°C. Small but consistent increase of ~12-22 units.
+- **Unknown A/B increase with temperature**: ~7662/7658 at 39°C vs ~7650/7646 at 22°C. Small but consistent increase of ~12-22 units. Not current (see charge current measurement section).
+
+### 2026-03-28 — Charge current measurement (62% SOC, ~28°C)
+
+Shunt voltage measured across 2x 1mΩ parallel resistors (R_shunt = 0.5 mΩ) in series with GND. Simultaneously with multimeter on charger cable.
+
+[Full log](logs/2026-03-28_current_measurement.log)
+
+#### Telemetry vs measured current
+
+| Telemetry | State | U_shunt | I_calc | I_multimeter | Unknown A | Unknown B |
+|-----------|-------|---------|--------|-------------|-----------|-----------|
+| 1 | 0x00 (Init) | 0–0.02 mV | ~0 A | — | 7668 | 7660 |
+| 2 | 0x02 (Precharge) | 0.91 mV | 1.82 A | ~1.7 A | 7668 | 7664 |
+
+**Conclusion:** Offsets 7–10 do not represent charge current. Values remain nearly constant (7668) despite current changing from 0 to 1.82 A.
