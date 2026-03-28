@@ -60,7 +60,28 @@ Example response:
 Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00 00 00 87 F1
 ```
 
-#### Telemetry Field Map
+#### Byte-by-byte breakdown
+
+| Byte(s) | Hex | Field | Value |
+|---------|-----|-------|-------|
+| 0 | `00` | PREFIX | Always 0x00 |
+| 1 | `80` | HEADER | Sender=0x80 (Battery), Seq=0 |
+| 2 | `16` | LENGTH | 22 payload bytes |
+| 3 | `10` | Cmd | 0x10 (Telemetry) |
+| 4 | `03` | State | 0x03 = Charging |
+| 5–7 | `00 00 00` | ? | Usually zero |
+| 8–9 | `F7 95` | Pack Voltage | 0x95F7 = 38391 mV (LE) |
+| 10–11 | `04 1E` | Unknown A | 0x1E04 = 7684 |
+| 12–13 | `FC 1D` | Unknown B | 0x1DFC = 7676 |
+| 14 | `16` | NTC MAX | 22°C |
+| 15 | `15` | NTC AVG | 21°C |
+| 16 | `16` | Temp Sensor 3 | 22°C |
+| 17 | `3D` | **SOC** | **61%** |
+| 18 | `12` | Charge counter | 18 |
+| 19–23 | `00 00 00 00 00` | Reserved | Always zero |
+| 24–25 | `87 F1` | CRC-16/X-25 | Over bytes 1–23 (LE) |
+
+#### Telemetry Field Map (payload offsets, starting after LENGTH byte)
 
 | Offset | Bytes | Type | Field | Notes |
 |--------|-------|------|-------|-------|
