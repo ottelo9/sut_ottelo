@@ -6,9 +6,9 @@
         "tx_gpio": 14
     },
     "logger": {
-        "source": "NA",
+        "source": "ott",
         "device": "BT-E6000",
-        "intent": "",
+        "intent": "battery-charger-test",
         "buffer_size": 100,
         "fsync": false
     }
