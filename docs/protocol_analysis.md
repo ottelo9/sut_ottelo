@@ -227,7 +227,7 @@ Both charger and battery use a rotating sequence number (0→1→2→3→0→...
 
 ## Motor/Display ↔ Battery Communication
 
-Captured 2026-03-29 with BT-E6000 in bike frame, communicating with motor and display. Same bus, same addresses, but different poll payload and additional commands.
+Captured 2026-03-29 with BT-E6000 in bike frame, communicating with motor (DU-E6012) and display (SC-E6010). Same bus, same addresses, but different poll payload and additional commands.
 
 ### Differences from Charger
 
