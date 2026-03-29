@@ -1,10 +1,14 @@
-# Protocol Analysis: EC-E6002 Charger ↔ BT-E6000 Battery
+# Protocol Analysis: Shimano E-Bike UART Communication
 Generated via ClaudeAI
 
 ## Overview
 
-Analysis of the UART communication between a Shimano EC-E6002 charger and BT-E6000 battery (36V, 10S Li-Ion, 418Wh).
-Data captured using dual-channel sniffing on a Raspberry Pi — hardware UART on GPIO15 (battery) and pigpio bit-bang serial on GPIO14 (charger).
+Analysis of the UART communication on a Shimano e-bike system:
+- **Charger ↔ Battery**: EC-E6002 charger and BT-E6000 battery
+- **Motor/Display ↔ Battery**: E-bike motor and display communicating with BT-E6000
+
+Battery: 36V, 10S4P Li-Ion, 418Wh.
+Data captured using dual-channel sniffing on a Raspberry Pi — hardware UART on GPIO15 (battery) and pigpio bit-bang serial on GPIO14 (charger/motor).
 
 ## Bus Topology
 
@@ -68,35 +72,38 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 | 1 | `80` | HEADER | Sender=0x80 (Battery), Seq=0 |
 | 2 | `16` | LENGTH | 22 payload bytes |
 | 3 | `10` | Cmd | 0x10 (Telemetry) |
-| 4 | `03` | State | 0x03 = Charging |
-| 5–7 | `00 00 00` | ? | Usually zero |
-| 8–9 | `F7 95` | Pack Voltage | 0x95F7 = 38391 mV (LE) |
-| 10–11 | `04 1E` | Cell V MAX | 0x1E04 = 7684 → 3842 mV |
-| 12–13 | `FC 1D` | Cell V MIN | 0x1DFC = 7676 → 3838 mV |
-| 14 | `16` | NTC MAX | 22°C |
-| 15 | `15` | NTC AVG | 21°C |
-| 16 | `16` | TH002 (MOSFET) | 22°C |
-| 17 | `3D` | **SOC** | **61%** |
-| 18 | `12` | Charge counter | 18 |
-| 19–23 | `00 00 00 00 00` | Reserved | Always zero |
-| 24–25 | `87 F1` | CRC-16/X-25 | Over bytes 1–23 (LE) |
+| 4 | `00` | ? | Always 0x00 |
+| 5 | `03` | State | 0x03 = Charging (charger), 0x01 = Active (motor) |
+| 6–8 | `00 00 00` | ? | Usually zero |
+| 9–10 | `F7 95` | Pack Voltage | 0x95F7 = 38391 mV (LE) |
+| 11–12 | `04 1E` | Cell V MAX | 0x1E04 = 7684 → 3842 mV |
+| 13–14 | `FC 1D` | Cell V MIN | 0x1DFC = 7676 → 3838 mV |
+| 15 | `16` | NTC MAX | 22°C |
+| 16 | `15` | NTC AVG | 21°C |
+| 17 | `16` | TH002 (MOSFET) | 22°C |
+| 18 | `3D` | **SOC** | **61%** |
+| 19 | `12` | Charge counter | 18 (charger mode) |
+| 20–24 | `00 00 00 00 00` | Reserved | Always zero |
+| 25–26 | `87 F1` | CRC-16/X-25 | Over bytes 1–24 (LE) |
 
 #### Telemetry Field Map (payload offsets, starting after LENGTH byte)
 
 | Offset | Bytes | Type | Field | Notes |
 |--------|-------|------|-------|-------|
 | 0 | `10` | uint8 | Cmd | Always 0x10 |
-| 1 | | uint8 | State | 0x00=Init, 0x02=Precharge?, 0x03=Charging |
-| 2–4 | | | ? | Usually `00 00 00` |
+| 1 | | uint8 | ? | Always 0x00 in all captures |
+| 2 | | uint8 | State | Charger: 0x00=Init, 0x02=Precharge, 0x03=Charging. Motor: 0x01=Active |
+| 3–4 | | | ? | Always `00 00` |
 | 5–6 | LE uint16 | **Pack Voltage (mV)** | See voltage table below |
-| 7–8 | LE uint16 | **Cell Voltage MAX (0.5 mV)** | Likely max cell group voltage. Divide by 2 for mV. Matches multimeter readings. |
-| 9–10 | LE uint16 | **Cell Voltage MIN (0.5 mV)** | Likely min cell group voltage. Always ~4–8 less than MAX (~2–4 mV). |
-| 11 | uint8 | **NTC Temperature MAX (°C)** | MAX of 2x 10K NTC sensors, value is directly °C. BT-E6000: TH003/TH004, BT-E6001: TH001/TH002. See sensor table below. |
+| 7–8 | LE uint16 | **Cell Voltage MAX (0.5 mV)** | Max cell group voltage. Divide by 2 for mV. Confirmed with multimeter. |
+| 9–10 | LE uint16 | **Cell Voltage MIN (0.5 mV)** | Min cell group voltage. Always ~4–8 less than MAX (~2–4 mV). |
+| 11 | uint8 | **NTC Temperature MAX (°C)** | MAX of 2x 10K NTC sensors, value is directly °C. See sensor table below. |
 | 12 | uint8 | **NTC Temperature AVG (°C)** | AVG of 2x 10K NTC sensors, value is directly °C |
-| 13 | uint8 | **TH002 Temperature (°C)** | MOSFET temperature sensor (mounted next to MOSFETs), value is directly °C. Consistently hottest reading in heat tests. |
-| 14 | uint8 | **SOC (%)** | **Confirmed**: actual state of charge percentage. Changed from 0x3D (61%) to 0x3E (62%) after charging. |
-| 15 | uint8 | Charge counter | Resets each session, counts up during charging. Not absolute SOC. |
-| 16–20 | | | Reserved | Always `00 00 00 00 00` |
+| 13 | uint8 | **TH002 Temperature (°C)** | MOSFET temperature sensor (next to MOSFETs), value is directly °C |
+| 14 | uint8 | **SOC (%)** | **Confirmed**: actual state of charge percentage |
+| 15–16 | | | Context-dependent | Charger: offset 15 = charge counter (resets each session). Motor: 0x90 0x01 (constant, purpose unknown) |
+| 17 | uint8 | ? | Charger: always 0x00. Motor: usually 0x01, increases during riding (seen 0x1C=28 under load) — possibly current-related |
+| 18–20 | | | Reserved | Always `00 00 00` |
 
 #### Voltage & SOC observations
 
@@ -218,12 +225,96 @@ Sensor designators vary by battery model:
 
 Both charger and battery use a rotating sequence number (0→1→2→3→0→...) in the lower nibble of the header byte. This is used across all message types.
 
+## Motor/Display ↔ Battery Communication
+
+Captured 2026-03-29 with BT-E6000 in bike frame, communicating with motor and display. Same bus, same addresses, but different poll payload and additional commands.
+
+### Differences from Charger
+
+| Feature | Charger (EC-E6002) | Motor/Display |
+|---------|-------------------|---------------|
+| Poll payload bytes 1–2 | Always `00 00` | `02 02` (boot), `03 03` (ready) |
+| Telemetry State (offset 2) | 0x00/0x02/0x03 | 0x01 (Active) |
+| Telemetry offset 15–16 | Charge counter (0–32) | `90 01` (constant) |
+| Telemetry offset 17 | Always 0x00 | 0x01 idle, up to 0x1C under load |
+| Additional commands | — | 0x11, 0x32, 0x21 |
+| Telemetry rate | Every ~3rd poll | Every poll |
+
+### Startup Sequence (Motor/Display)
+
+```
+1. Handshake:     R2: 00 41 00 F9 50  →  R: 00 C1 00 35 DC
+2. Init Poll:     R2: 00 02 05 10 02 02 00 00 C2 97     (State=0x02, boot)
+3. Cmd 0x11 req:  R2: 00 00 01 11 1C DE                  (device info request, 1 byte)
+4. Cmd 0x11 resp: R:  00 80 09 11 00 29 00 C3 01 00 00 5D 72 8B  (9-byte response)
+5. Cmd 0x32:      R:  00 81 02 32 00 A1 FD               (battery sends 2-byte 0x32)
+6. Steady polls:  R2: 00 03 05 10 03 03 00 00 70 4E      (State=0x03, ready)
+7. Telemetry:     R:  00 83 16 10 00 01 00 00 00 ...     (State=0x01, Active)
+```
+
+### Shutdown Sequence
+
+```
+Motor  → 00 00 01 21 9F EF            Cmd 0x21, Length=1 (shutdown request)
+Battery→ 00 80 03 21 00 00 08 39      Cmd 0x21, Length=3 (shutdown ack, payload: 21 00 00)
+```
+
+### New Command Types
+
+#### Cmd 0x11 — Device Info (Length=1 request, Length=9 response)
+
+Motor requests battery info. Battery responds with 9-byte payload:
+```
+R2: 00 00 01 11 1C DE                           Motor request
+R:  00 80 09 11 00 29 00 C3 01 00 00 5D 72 8B   Battery response
+                 ^^                               0x29=41 — capacity? model?
+                       ^^ ^^                      0xC3 0x01 — firmware?
+                                   ^^             0x5D=93
+```
+This exchange happens once at startup, after the initial boot poll.
+
+#### Cmd 0x32 — Trip/Config (variable length)
+
+Bidirectional exchange, appears periodically:
+```
+R:  00 81 02 32 00 A1 FD                        Battery→Motor (2 bytes: 32 00)
+R2: 00 02 07 32 1A 03 1D 0F 17 18 29 67         Motor→Battery (7 bytes)
+R:  00 82 02 32 00 6C D8                        Battery→Motor (2 bytes: 32 00)
+```
+The 7-byte motor payload (`32 1A 03 1D 0F 17 18`) may contain date/time or trip data.
+
+#### Cmd 0x21 — Shutdown (Length=1 request, Length=3 response)
+
+Sent by motor/display when user presses power button on display:
+```
+R2: 00 00 01 21 9F EF          Shutdown request
+R:  00 80 03 21 00 00 08 39    Shutdown acknowledgment
+```
+
+### Driving Telemetry
+
+During slow ECO mode riding, voltage drops and offset 17 increases:
+
+| Condition | Pack Voltage | Cell V MAX | Cell V MIN | Spread | Offset 17 |
+|-----------|-------------|-----------|-----------|--------|-----------|
+| Idle (motor on) | 38320 mV | 3834 mV | 3830 mV | 4 mV | 0x01 |
+| Driving (ECO) | 38182 mV | 3820 mV | 3815 mV | 5 mV | 0x1C (28) |
+| After stop | 38295 mV | 3831 mV | 3828 mV | 3 mV | 0x01 |
+
+- Voltage drop of **~140 mV** under load
+- Cell spread increases from 4 mV to 5 mV under load
+- **Offset 17 jumps to 0x1C (28) during riding** — possibly discharge current indicator
+- Temperatures stable at 14°C / 14°C / 13–14°C (outdoor, cooler day)
+- SOC = 0x3D (61%) throughout
+
 ## Open Questions
 
-- **Cell V MAX/MIN (offsets 7–10)**: Likely max/min cell group voltages in 0.5 mV units. Multimeter confirms cells at 3834.9–3836.1 mV (unloaded), matching telemetry values. Still needs full verification under different SOC levels.
-- Offset 15 ("Charge counter") resets each session and counts up. What does it represent? Coulomb counter? Charge phase indicator?
-- Why does the battery only respond with telemetry to some charger polls? Is it time-based or sequence-based?
-- What triggers the state transitions (0x00 → 0x02 → 0x03)?
+- **Cmd 0x11 payload**: What do the 9 response bytes represent? Battery model, capacity, firmware version?
+- **Cmd 0x32 payload**: What is the 7-byte motor→battery payload? Date/time? Trip data? Odometer?
+- **Offset 17**: Increases to 0x1C (28) during riding — is this discharge current in some unit?
+- **Offset 15–16 in motor mode**: Constant `0x90 0x01` — what does this represent?
+- **Poll payload bytes 1–2**: Motor sends 0x02/0x03 — assist mode? System state? Does byte 2 change with assist level (ECO/TRAIL/BOOST)?
+- Why does the battery respond to every motor poll but only every ~3rd charger poll?
 
 
 ## Logs
@@ -306,3 +397,26 @@ Multimeter measurement of all 10 cell groups (charger disconnected, 62% SOC):
 - Range: **3834.9 – 3836.1 mV** (spread 1.2 mV)
 - Telemetry Cell V MAX/MIN at same SOC: 3834/3830 mV (under load)
 - Values match within measurement tolerance, confirming offsets 7–10 as cell group voltages in 0.5 mV units.
+
+### 2026-03-29 — Bike power on/off, test 1 (61% SOC, ~14°C)
+
+Battery in bike frame. Powered on via display, idle for ~30 seconds, powered off via display button.
+
+[Full log](logs/2026-03-29_test_with_bike_on_1.log)
+
+Shows full startup sequence (handshake → Cmd 0x11 → Cmd 0x32 → steady polling) and shutdown (Cmd 0x21).
+Telemetry State = 0x01 (Active), temperatures 14°C (outdoor). New commands 0x11, 0x32, 0x21 first observed here.
+
+### 2026-03-29 — Bike driving ECO mode, test 2 (61% SOC, ~14°C)
+
+Battery powered on, slow riding in ECO assist mode, then powered off.
+
+[Full log](logs/2026-03-29_test_with_bike_driving_2.log)
+
+Voltage drop visible during riding: 38320 mV (idle) → 38182 mV (under load). Offset 17 increases from 0x01 to 0x1C (28) during motor assist. TH002 dropped from 14°C to 13°C (outdoor cooling). One garbled message visible (bus contention during driving).
+
+### 2026-03-29 — Bike power on/off, test 3 (61% SOC, ~14°C)
+
+Short on/off cycle, same as test 1. Multiple handshake retries visible at startup.
+
+[Full log](logs/2026-03-29_test_with_bike_on_3.log)

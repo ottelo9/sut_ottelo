@@ -153,6 +153,60 @@ Set `tx_enabled` to `false` in `config.json` to activate dual-channel mode:
 
 If pigpio is not installed or pigpiod is not running, the tool falls back to single-channel mode (CH1 only) with a warning.
 
+## Battery Simulator Mode
+
+The tool can impersonate a Shimano BT-E6000 battery on the UART bus, responding to charger handshakes and polls with configurable telemetry data.
+
+**WARNING:** Do NOT connect a real battery when using simulator mode. The charger will deliver current without real BMS protection.
+
+### Starting Simulator Mode
+
+Run the tool and select mode 2 at the startup menu:
+
+```
+========================================
+  Select Mode
+========================================
+  1) Logging Mode      (RX + RX2 sniffing)
+  2) Simulator Mode    (Battery BMS simulation)
+========================================
+  Select [1/2]: 2
+```
+
+The simulator automatically:
+- Enables TX on GPIO14
+- Responds to charger handshakes (0x40→0xC0)
+- Sends telemetry (Cmd 0x10, Length=22) every 3rd poll
+- Sends ack pairs between telemetry (CRC=0x0000, like real battery)
+- Transitions through states: Init (1s) → Precharge (2s) → Charging
+
+### Config
+
+For simulator mode, `tx_enabled` can remain `false` in config.json — the tool overrides it automatically:
+
+```json
+{
+    "uart": {
+        "port": "/dev/serial0",
+        "baud": 9600,
+        "tx_enabled": false,
+        "tx_gpio": 14
+    }
+}
+```
+
+### Runtime Commands
+
+Adjust simulated values while running:
+
+| Command | Example | Description |
+|---------|---------|-------------|
+| `voltage <mV>` | `voltage 38300` | Set pack voltage (auto-calculates cell voltages) |
+| `soc <percent>` | `soc 62` | Set state of charge |
+| `temp <max> <avg> <th002>` | `temp 22 21 22` | Set NTC MAX, NTC AVG, TH002 temperatures |
+| `status` | `status` | Show current simulator state and values |
+| `help` | `help` | List available commands |
+
 ## Colored Output
 
 |Color   |Meaning                    |
