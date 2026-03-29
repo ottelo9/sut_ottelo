@@ -42,10 +42,15 @@ class Msg:
     def reply_for_msg(cls, msg:"Msg"):
         result = cls()
         result.cmd = msg.cmd
-        result.seq = msg.seq 
+        result.seq = msg.seq
         result.sender = msg.sender | 0x80
+        return result
 
     def pack(self):
+        # If data was pre-built (e.g. by simulator), use it directly
+        if self.data and len(self.data) >= 5:
+            return self.data
+
         # 1. Collect payload values
         values = [getattr(self, f) for f in self.FIELDS]
 
