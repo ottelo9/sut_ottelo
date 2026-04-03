@@ -5,7 +5,7 @@ Generated via ClaudeAI
 
 Analysis of the UART communication on a Shimano e-bike system:
 - **Charger ↔ Battery**: EC-E6002 charger and BT-E6000 battery
-- **Motor/Display ↔ Battery**: E-bike motor and display communicating with BT-E6000
+- **Motor/Display ↔ Battery**: Motor DU-E6012 and display SC-E6010 communicating with BT-E6000
 
 Battery: 36V, 10S4P Li-Ion, 418Wh.
 Data captured using dual-channel sniffing on a Raspberry Pi — hardware UART on GPIO15 (battery) and pigpio bit-bang serial on GPIO14 (charger/motor).
@@ -307,6 +307,60 @@ During slow ECO mode riding, voltage drops and offset 17 increases:
 - Temperatures stable at 14°C / 14°C / 13–14°C (outdoor, cooler day)
 - SOC = 0x3D (61%) throughout
 
+## BT-E6001 Fault Analysis — Battery Reports 0V, Charging Fails
+
+Captured 2026-04-03 with a defective BT-E6001 battery connected to EC-E6002 charger. The battery communicates on the UART bus but reports zero pack voltage — charger cannot initiate charging.
+
+[Full log](logs/2026-04-03_bt-e6001_charger_fault.log)
+
+### Communication Anomalies
+
+| Observation | BT-E6000 (healthy) | BT-E6001 (defective) |
+|-------------|--------------------|-----------------------|
+| Handshake response | Immediate | 3 retries before response |
+| Charger poll byte 1 | Always `00` | `04` initially, then `00` after handshake |
+| Telemetry offset 1 | Always `0x00` | `0x10` in first response (fault flag?) |
+| Telemetry offset 4 | Always `0x00` | `0x02` (persistent) |
+| Pack voltage | 38200–38400 mV | **0–5 mV** |
+| Cell V MAX/MIN | 3820–3840 mV | **0 mV** |
+| NTC MAX | 20–39°C (normal) | **0°C** (one sensor defective?) |
+| NTC AVG / TH003 | Normal | 25°C / 25°C (normal) |
+| SOC | 61–62% | 29% (likely EEPROM-cached) |
+| Reaches State 0x03 | Yes (Charging) | **No** — stuck at 0x02 (Precharge) |
+
+### Telemetry Decode
+
+**First response** (after charger polls with 0x04 flag):
+```
+R: 00 82 16 10 10 00 00 02 05 00 00 00 00 00 00 19 19 19 1D 00 00 00 00 00 00 96 1C
+             ^^ ^^       ^^  ^^^^^                ^^
+             Cmd Off1=0x10 Off4=0x02 Pack=5mV     NTC MAX=0°C
+```
+
+**Second response** (after successful handshake, normal poll):
+```
+R: 00 82 16 10 00 02 00 02 00 00 00 00 00 00 00 19 19 19 1D 00 00 01 00 00 00 50 88
+             ^^ ^^ ^^    ^^ ^^^^^                ^^          ^^
+             Cmd 00 State=0x02 Off4=0x02 Pack=0mV NTC MAX=0°C SOC=29%
+```
+
+### Diagnosis
+
+1. **Pack voltage = 0 mV**: The BMS has disconnected the cells from the output (MOSFET protection active). The voltage measurement point is after the FETs.
+2. **Offset 1 = 0x10**: Likely a **fault/error flag**. Only seen in first telemetry, clears to 0x00 in subsequent responses. Bit 4 set — could indicate specific fault type.
+3. **Offset 4 = 0x02**: Persistent across both telemetries. Never seen with BT-E6000. Possibly a **fault code** or **error counter**.
+4. **NTC MAX = 0°C**: One of the two NTC cell sensors reads 0°C at 25°C ambient — sensor fault or disconnected wire. NTC AVG = 25°C and TH003 = 25°C are normal, meaning the other NTC and MOSFET sensor work.
+5. **SOC = 29%**: Likely an EEPROM-stored value from before the fault occurred. Without cell voltage measurement, the BMS cannot calculate live SOC.
+6. **Charger poll byte 1 = 0x04**: The charger sends 0x04 when the handshake failed (3 retries without response). After successful handshake, reverts to 0x00. Possible meaning: error recovery / retry mode.
+
+### Possible Root Causes
+
+- **BMS lockout**: Over-discharge, over-current, or short-circuit protection triggered. FETs remain off.
+- **NTC sensor fault**: A defective NTC (reading 0°C) could cause the BMS to refuse charging as a safety measure (temperature out of range).
+- **Cell imbalance or damage**: If cells are deeply discharged (<2.5V), the BMS blocks output. SOC 29% would be plausible for a battery that sat discharged for a long time.
+
+**Recommended next step**: Measure cell voltages directly at the balance connector to determine if cells are alive or deeply discharged.
+
 ## Open Questions
 
 - **Cmd 0x11 payload**: What do the 9 response bytes represent? Battery model, capacity, firmware version?
@@ -420,3 +474,9 @@ Voltage drop visible during riding: 38320 mV (idle) → 38182 mV (under load). O
 Short on/off cycle, same as test 1. Multiple handshake retries visible at startup.
 
 [Full log](logs/2026-03-29_test_with_bike_on_3.log)
+
+### 2026-04-03 — BT-E6001 charger fault (29% SOC cached, ~25°C)
+
+Defective BT-E6001 battery. Charger connects but battery reports 0V pack voltage. Charging never starts (stuck at Precharge). See [BT-E6001 Fault Analysis](#bt-e6001-fault-analysis--battery-reports-0v-charging-fails) for full decode.
+
+[Full log](logs/2026-04-03_bt-e6001_charger_fault.log)
