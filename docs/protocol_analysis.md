@@ -76,19 +76,19 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 | 0 | `00` | PREFIX | Always 0x00 |
 | 1 | `80` | HEADER | Upper nibble = sender address (0x80 = Battery), lower nibble = sequence number (0 here). Seq cycles 0→1→2→3→0 across successive messages. |
 | 2 | `16` | LENGTH | 22 payload bytes |
-| 3 | `10` | Cmd | 0x10 (Telemetry) |
-| 4 | `00` | ? | Always 0x00 |
-| 5 | `03` | State | 0x03 = Charging (charger), 0x01 = Active (motor) |
-| 6–8 | `00 00 00` | ? | Usually zero |
-| 9–10 | `F7 95` | Pack Voltage | 0x95F7 = 38391 mV (LE) |
-| 11–12 | `04 1E` | Cell V MAX | 0x1E04 = 7684 → 3842 mV |
-| 13–14 | `FC 1D` | Cell V MIN | 0x1DFC = 7676 → 3838 mV |
-| 15 | `16` | NTC MAX | 22°C |
-| 16 | `15` | NTC AVG | 21°C |
-| 17 | `16` | TH002 (MOSFET) | 22°C |
-| 18 | `3D` | **SOC** | **61%** |
-| 19 | `12` | Charge counter | 18 (charger mode) |
-| 20–24 | `00 00 00 00 00` | Reserved | Always zero |
+| 3 | `10` | Cmd (offset 0) | 0x10 (Telemetry) |
+| 4 | `00` | ? (offset 1) | Always 0x00 (BT-E6000). BT-E6001 fault: 0x10 |
+| 5 | `03` | State (offset 2) | 0x03 = Charging (charger), 0x01 = Active (motor) |
+| 6–8 | `00 00 00` | ? (offset 3–5) | BT-E6000: always zero. BT-E6001 fault: `00 02 05` / `00 02 00` |
+| 9–10 | `F7 95` | Pack Voltage (offset 6–7) | 0x95F7 = 38391 mV (LE) |
+| 11–12 | `04 1E` | Cell V MAX (offset 8–9) | 0x1E04 = 7684 → 3842 mV |
+| 13–14 | `FC 1D` | Cell V MIN (offset 10–11) | 0x1DFC = 7676 → 3838 mV |
+| 15 | `16` | NTC MAX (offset 12) | 22°C |
+| 16 | `15` | NTC AVG (offset 13) | 21°C |
+| 17 | `16` | TH002 (offset 14) | 22°C (MOSFET sensor) |
+| 18 | `3D` | **SOC** (offset 15) | **61%** |
+| 19 | `12` | Charge counter (offset 16) | 18 (charger mode) |
+| 20–24 | `00 00 00 00 00` | Reserved (offset 17–21) | Always zero |
 | 25–26 | `87 F1` | CRC-16/X-25 | Over bytes 1–24 (LE) |
 
 #### Telemetry Field Map (payload offsets, starting after LENGTH byte)
@@ -96,19 +96,19 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 | Offset | Bytes | Type | Field | Notes |
 |--------|-------|------|-------|-------|
 | 0 | `10` | uint8 | Cmd | Always 0x10 |
-| 1 | | uint8 | ? | Always 0x00 in all captures |
+| 1 | | uint8 | ? | BT-E6000: always 0x00. BT-E6001 (fault): 0x10 in first response |
 | 2 | | uint8 | State | Charger: 0x00=Init, 0x02=Precharge, 0x03=Charging. Motor: 0x01=Active |
-| 3–4 | | | ? | Always `00 00` |
-| 5–6 | LE uint16 | **Pack Voltage (mV)** | See voltage table below |
-| 7–8 | LE uint16 | **Cell Voltage MAX (0.5 mV)** | Max cell group voltage. Divide by 2 for mV. Confirmed with multimeter. |
-| 9–10 | LE uint16 | **Cell Voltage MIN (0.5 mV)** | Min cell group voltage. Always ~4–8 less than MAX (~2–4 mV). |
-| 11 | uint8 | **NTC Temperature MAX (°C)** | MAX of 2x 10K NTC sensors, value is directly °C. See sensor table below. |
-| 12 | uint8 | **NTC Temperature AVG (°C)** | AVG of 2x 10K NTC sensors, value is directly °C |
-| 13 | uint8 | **TH002 Temperature (°C)** | MOSFET temperature sensor (next to MOSFETs), value is directly °C |
-| 14 | uint8 | **SOC (%)** | **Confirmed**: actual state of charge percentage |
-| 15–16 | | | Context-dependent | Charger: offset 15 = charge counter (resets each session). Motor: 0x90 0x01 (constant, purpose unknown) |
-| 17 | uint8 | ? | Charger: always 0x00. Motor: usually 0x01, increases during riding (seen 0x1C=28 under load) — possibly current-related |
-| 18–20 | | | Reserved | Always `00 00 00` |
+| 3–5 | | | ? | BT-E6000: always `00 00 00`. BT-E6001 (fault): `00 02 05` / `00 02 00` |
+| 6–7 | LE uint16 | **Pack Voltage (mV)** | See voltage table below |
+| 8–9 | LE uint16 | **Cell Voltage MAX (0.5 mV)** | Max cell group voltage. Divide by 2 for mV. Confirmed with multimeter. |
+| 10–11 | LE uint16 | **Cell Voltage MIN (0.5 mV)** | Min cell group voltage. Always ~4–8 less than MAX (~2–4 mV). |
+| 12 | uint8 | **NTC Temperature MAX (°C)** | MAX of 2x 10K NTC sensors, value is directly °C. See sensor table below. |
+| 13 | uint8 | **NTC Temperature AVG (°C)** | AVG of 2x 10K NTC sensors, value is directly °C |
+| 14 | uint8 | **TH002 Temperature (°C)** | MOSFET temperature sensor (next to MOSFETs), value is directly °C |
+| 15 | uint8 | **SOC (%)** | **Confirmed**: actual state of charge percentage |
+| 16–17 | | | Context-dependent | Charger: offset 16 = charge counter (resets each session). Motor: 0x90 0x01 (constant, purpose unknown) |
+| 18 | uint8 | ? | Charger: always 0x00. Motor: usually 0x01, increases during riding (seen 0x1C=28 under load) — possibly current-related |
+| 19–21 | | | Reserved | Always `00 00 00` |
 
 #### Voltage & SOC observations
 
@@ -240,8 +240,8 @@ Captured 2026-03-29 with BT-E6000 in bike frame, communicating with motor (DU-E6
 |---------|-------------------|---------------|
 | Poll payload bytes 1–2 | Always `00 00` | `02 02` (boot), `03 03` (ready) |
 | Telemetry State (offset 2) | 0x00/0x02/0x03 | 0x01 (Active) |
-| Telemetry offset 15–16 | Charge counter (0–32) | `90 01` (constant) |
-| Telemetry offset 17 | Always 0x00 | 0x01 idle, up to 0x1C under load |
+| Telemetry offset 16–17 | Charge counter (0–32) | `90 01` (constant) |
+| Telemetry offset 18 | Always 0x00 | 0x01 idle, up to 0x1C under load |
 | Additional commands | — | 0x11, 0x32, 0x21 |
 | Telemetry rate | Every ~3rd poll | Every poll |
 
@@ -300,7 +300,7 @@ R:  00 80 03 21 00 00 08 39    Shutdown acknowledgment
 
 During slow ECO mode riding, voltage drops and offset 17 increases:
 
-| Condition | Pack Voltage | Cell V MAX | Cell V MIN | Spread | Offset 17 |
+| Condition | Pack Voltage | Cell V MAX | Cell V MIN | Spread | Offset 18 |
 |-----------|-------------|-----------|-----------|--------|-----------|
 | Idle (motor on) | 38320 mV | 3834 mV | 3830 mV | 4 mV | 0x01 |
 | Driving (ECO) | 38182 mV | 3820 mV | 3815 mV | 5 mV | 0x1C (28) |
@@ -308,7 +308,7 @@ During slow ECO mode riding, voltage drops and offset 17 increases:
 
 - Voltage drop of **~140 mV** under load
 - Cell spread increases from 4 mV to 5 mV under load
-- **Offset 17 jumps to 0x1C (28) during riding** — possibly discharge current indicator
+- **Offset 18 jumps to 0x1C (28) during riding** — possibly discharge current indicator
 - Temperatures stable at 14°C / 14°C / 13–14°C (outdoor, cooler day)
 - SOC = 0x3D (61%) throughout
 
@@ -325,12 +325,11 @@ Captured 2026-04-03 with a defective BT-E6001 battery connected to EC-E6002 char
 | Handshake response | Immediate | 3 retries before response |
 | Charger poll byte 1 | Always `00` | `04` initially, then `00` after handshake |
 | Telemetry offset 1 | Always `0x00` | `0x10` in first response (fault flag?) |
-| Telemetry offset 4 | Always `0x00` | `0x02` (persistent) |
-| Pack voltage | 38200–38400 mV | **0–5 mV** |
-| Cell V MAX/MIN | 3820–3840 mV | **0 mV** |
-| NTC MAX | 20–39°C (normal) | **0°C** (one sensor defective?) |
-| NTC AVG / TH003 | Normal | 25°C / 25°C (normal) |
-| SOC | 61–62% | 29% (likely EEPROM-cached) |
+| Telemetry offset 3–5 | Always `00 00 00` | `00 02 05` (1st) / `00 02 00` (2nd) |
+| Pack voltage (offset 6–7) | 38200–38400 mV | **0 mV** |
+| Cell V MAX/MIN (offset 8–11) | 3820–3840 mV | **0 mV** |
+| NTC MAX / AVG / TH003 (offset 12–14) | 20–39°C | 25°C / 25°C / 25°C (all normal) |
+| SOC (offset 15) | 61–62% | 29% (likely EEPROM-cached) |
 | Reaches State 0x03 | Yes (Charging) | **No** — stuck at 0x02 (Precharge) |
 
 ### Telemetry Decode
@@ -345,27 +344,27 @@ Captured 2026-04-03 with a defective BT-E6001 battery connected to EC-E6002 char
 - **LL** = Length (0x16 = 22 bytes)
 - **Cmd** = 0x10 (telemetry). 1st response has offset 1 = **0x10** (fault flag?), 2nd has 0x00 (normal)
 - **State** = 0x00 (Init) in 1st, **0x02** (Precharge) in 2nd
-- **Offset 4** = 0x02 in both (never seen with BT-E6000, possibly fault code)
-- **PackV** = 5 mV / 0 mV — essentially **0V** (BMS FETs disconnected)
-- **MaxV / MinV** = 0 / 0 — no cell voltage reading
-- **Mx** (NTC MAX) = 0x00 = **0°C** — one NTC sensor defective
-- **Av** (NTC AVG) = 0x19 = 25°C, **T3** (TH003 MOSFET) = 0x19 = 25°C — normal
-- **SOC** = 0x1D = **29%** (EEPROM-cached value)
+- **Offset 3–5** = `00 02 05` (1st) / `00 02 00` (2nd) — BT-E6000 always `00 00 00`. Possibly fault-related.
+- **PackV** (offset 6–7) = 0 mV in both — **0V** (BMS FETs disconnected)
+- **MaxV / MinV** (offset 8–11) = 0 / 0 — no cell voltage reading
+- **Mx** (NTC MAX, offset 12) = 0x19 = **25°C** — normal
+- **Av** (NTC AVG, offset 13) = 0x19 = 25°C — normal
+- **T3** (TH003 MOSFET, offset 14) = 0x19 = 25°C — normal
+- **SOC** (offset 15) = 0x1D = **29%** (EEPROM-cached value, no live measurement possible at 0V)
 
 ### Diagnosis
 
 1. **Pack voltage = 0 mV**: The BMS has disconnected the cells from the output (MOSFET protection active). The voltage measurement point is after the FETs.
-2. **Offset 1 = 0x10**: Likely a **fault/error flag**. Only seen in first telemetry, clears to 0x00 in subsequent responses. Bit 4 set — could indicate specific fault type.
-3. **Offset 4 = 0x02**: Persistent across both telemetries. Never seen with BT-E6000. Possibly a **fault code** or **error counter**.
-4. **NTC MAX = 0°C**: One of the two NTC cell sensors reads 0°C at 25°C ambient — sensor fault or disconnected wire. NTC AVG = 25°C and TH003 = 25°C are normal, meaning the other NTC and MOSFET sensor work.
+2. **Temperature sensors all normal** (25°C at room temperature) — no sensor fault.
+3. **Offset 1 = 0x10**: Likely a **fault/error flag**. Only seen in first telemetry, clears to 0x00 in subsequent responses. Bit 4 set — could indicate specific fault type.
+4. **Offset 3–5 = `00 02 xx`**: Persistent 0x02 at offset 4, never seen with BT-E6000. Offset 5 changes between responses (0x05 → 0x00). Possibly **fault code** or **error state**.
 5. **SOC = 29%**: Likely an EEPROM-stored value from before the fault occurred. Without cell voltage measurement, the BMS cannot calculate live SOC.
 6. **Charger poll byte 1 = 0x04**: The charger sends 0x04 when the handshake failed (3 retries without response). After successful handshake, reverts to 0x00. Possible meaning: error recovery / retry mode.
 
 ### Possible Root Causes
 
 - **BMS lockout**: Over-discharge, over-current, or short-circuit protection triggered. FETs remain off.
-- **NTC sensor fault**: A defective NTC (reading 0°C) could cause the BMS to refuse charging as a safety measure (temperature out of range).
-- **Cell imbalance or damage**: If cells are deeply discharged (<2.5V), the BMS blocks output. SOC 29% would be plausible for a battery that sat discharged for a long time.
+- **Cell imbalance or deep discharge**: If cells are below safe voltage threshold (<2.5V), the BMS blocks output. SOC 29% would be plausible for a battery that sat discharged for a long time.
 
 **Recommended next step**: Measure cell voltages directly at the balance connector to determine if cells are alive or deeply discharged.
 
@@ -373,8 +372,8 @@ Captured 2026-04-03 with a defective BT-E6001 battery connected to EC-E6002 char
 
 - **Cmd 0x11 payload**: What do the 9 response bytes represent? Battery model, capacity, firmware version?
 - **Cmd 0x32 payload**: What is the 7-byte motor→battery payload? Date/time? Trip data? Odometer?
-- **Offset 17**: Increases to 0x1C (28) during riding — is this discharge current in some unit?
-- **Offset 15–16 in motor mode**: Constant `0x90 0x01` — what does this represent?
+- **Offset 18**: Increases to 0x1C (28) during riding — is this discharge current in some unit?
+- **Offset 16–17 in motor mode**: Constant `0x90 0x01` — what does this represent?
 - **Poll payload bytes 1–2**: Motor sends 0x02/0x03 — assist mode? System state? Does byte 2 change with assist level (ECO/TRAIL/BOOST)?
 - Why does the battery respond to every motor poll but only every ~3rd charger poll?
 
@@ -475,7 +474,7 @@ Battery powered on, slow riding in ECO assist mode, then powered off.
 
 [Full log](logs/2026-03-29_test_with_bike_driving_2.log)
 
-Voltage drop visible during riding: 38320 mV (idle) → 38182 mV (under load). Offset 17 increases from 0x01 to 0x1C (28) during motor assist. TH002 dropped from 14°C to 13°C (outdoor cooling). One garbled message visible (bus contention during driving).
+Voltage drop visible during riding: 38320 mV (idle) → 38182 mV (under load). Offset 18 increases from 0x01 to 0x1C (28) during motor assist. TH002 dropped from 14°C to 13°C (outdoor cooling). One garbled message visible (bus contention during driving).
 
 ### 2026-03-29 — Bike power on/off, test 3 (61% SOC, ~14°C)
 
