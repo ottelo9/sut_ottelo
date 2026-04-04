@@ -335,22 +335,31 @@ Captured 2026-04-03 with a defective BT-E6001 battery connected to EC-E6002 char
 ### Telemetry Decode
 
 ```
+BT-E6001 (defective):
    00 82 16 10 10 00 00 02 05 00 00 00 00 00 00 19 19 19 1D 00 00 00 00 00 00 96 1C  ← 1st response (charger poll with 0x04 flag)
    00 82 16 10 00 02 00 02 00 00 00 00 00 00 00 19 19 19 1D 00 00 01 00 00 00 50 88  ← 2nd response (after handshake, normal poll)
+
+BT-E6000 (healthy, for comparison):
+   00 83 16 10 00 00 00 00 00 B1 95 F4 1D EC 1D 1C 1A 1B 3E 00 00 00 00 00 00 1D 8D  ← Init (State=0x00)
+   00 81 16 10 00 02 00 00 00 BA 95 F4 1D F0 1D 1C 1A 1B 3E 01 00 00 00 00 00 A4 59  ← Precharge (State=0x02)
+
          ^^ ^^    ^^          ^^^^^ ^^^^^ ^^^^^ ^^ ^^ ^^ ^^
-         LL Cmd   State       PackV  MaxV  MinV Mx Av T3 SOC
+         LL Cmd   State       PackV  MaxV  MinV Mx Av T2 SOC
 ```
 
-- **LL** = Length (0x16 = 22 bytes)
-- **Cmd** = 0x10 (telemetry). 1st response has offset 1 = **0x10** (fault flag?), 2nd has 0x00 (normal)
-- **State** = 0x00 (Init) in 1st, **0x02** (Precharge) in 2nd
-- **Offset 3–5** = `00 02 05` (1st) / `00 02 00` (2nd) — BT-E6000 always `00 00 00`. Possibly fault-related.
-- **PackV** (offset 6–7) = 0 mV in both — **0V** (BMS FETs disconnected)
-- **MaxV / MinV** (offset 8–11) = 0 / 0 — no cell voltage reading
-- **Mx** (NTC MAX, offset 12) = 0x19 = **25°C** — normal
-- **Av** (NTC AVG, offset 13) = 0x19 = 25°C — normal
-- **T3** (TH003 MOSFET, offset 14) = 0x19 = 25°C — normal
-- **SOC** (offset 15) = 0x1D = **29%** (EEPROM-cached value, no live measurement possible at 0V)
+| Field | BT-E6001 (defective) | BT-E6000 (healthy) |
+|-------|----------------------|--------------------|
+| Offset 1 | **0x10** (1st) / 0x00 (2nd) | 0x00 (always) |
+| State (offset 2) | 0x00 → 0x02 | 0x00 → 0x02 |
+| Offset 3–5 | **`00 02 05`** / **`00 02 00`** | `00 00 00` (always) |
+| PackV (offset 6–7) | **0 mV** | 38321 mV / 38330 mV |
+| MaxV (offset 8–9) | **0** | 3834 mV / 3834 mV |
+| MinV (offset 10–11) | **0** | 3830 mV / 3832 mV |
+| NTC MAX (offset 12) | 25°C | 28°C |
+| NTC AVG (offset 13) | 25°C | 26°C |
+| TH002/TH003 (offset 14) | 25°C | 27°C |
+| SOC (offset 15) | 29% (EEPROM) | 62% |
+| Charge ctr (offset 16) | 0 / 0 | 0 / 1 |
 
 ### Diagnosis
 
