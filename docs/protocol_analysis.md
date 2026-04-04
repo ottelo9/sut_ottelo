@@ -57,7 +57,12 @@ Payload is always `10 00 00 00 00` — Cmd 0x10 followed by 4 zero bytes. The ch
 
 ### 3. Battery Telemetry Response — Cmd 0x10 (Length=22)
 
-The battery responds to charger polls with full telemetry data. Not every poll gets a telemetry response — on some polls only a short ack pair is sent.
+The battery sends full 22-byte telemetry responses only at specific moments — **not continuously**:
+
+1. **On initial connection** — first telemetry after charger is plugged in (State 0x00 Init)
+2. **On charging start** — when State transitions to 0x03 (Charging)
+
+After these two responses, the battery only sends short ack pairs (see Section 4). If the charger is disconnected and reconnected, the cycle repeats. This is consistently observed across all captures (see [5x connect/disconnect log](logs/2026-03-28_0850_5x_connect_disconnect.log) and [charger reconnect log](logs/2026-03-28_0920_charger_reconnect.log)).
 
 Example response:
 ```
@@ -69,7 +74,7 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 | Byte(s) | Hex | Field | Value |
 |---------|-----|-------|-------|
 | 0 | `00` | PREFIX | Always 0x00 |
-| 1 | `80` | HEADER | Sender=0x80 (Battery), Seq=0 |
+| 1 | `80` | HEADER | Upper nibble = sender address (0x80 = Battery), lower nibble = sequence number (0 here). Seq cycles 0→1→2→3→0 across successive messages. |
 | 2 | `16` | LENGTH | 22 payload bytes |
 | 3 | `10` | Cmd | 0x10 (Telemetry) |
 | 4 | `00` | ? | Always 0x00 |
@@ -330,19 +335,22 @@ Captured 2026-04-03 with a defective BT-E6001 battery connected to EC-E6002 char
 
 ### Telemetry Decode
 
-**First response** (after charger polls with 0x04 flag):
 ```
-R: 00 82 16 10 10 00 00 02 05 00 00 00 00 00 00 19 19 19 1D 00 00 00 00 00 00 96 1C
-             ^^ ^^       ^^  ^^^^^                ^^
-             Cmd Off1=0x10 Off4=0x02 Pack=5mV     NTC MAX=0°C
+   00 82 16 10 10 00 00 02 05 00 00 00 00 00 00 19 19 19 1D 00 00 00 00 00 00 96 1C  ← 1st response (charger poll with 0x04 flag)
+   00 82 16 10 00 02 00 02 00 00 00 00 00 00 00 19 19 19 1D 00 00 01 00 00 00 50 88  ← 2nd response (after handshake, normal poll)
+         ^^ ^^    ^^          ^^^^^ ^^^^^ ^^^^^ ^^ ^^ ^^ ^^
+         LL Cmd   State       PackV  MaxV  MinV Mx Av T3 SOC
 ```
 
-**Second response** (after successful handshake, normal poll):
-```
-R: 00 82 16 10 00 02 00 02 00 00 00 00 00 00 00 19 19 19 1D 00 00 01 00 00 00 50 88
-             ^^ ^^ ^^    ^^ ^^^^^                ^^          ^^
-             Cmd 00 State=0x02 Off4=0x02 Pack=0mV NTC MAX=0°C SOC=29%
-```
+- **LL** = Length (0x16 = 22 bytes)
+- **Cmd** = 0x10 (telemetry). 1st response has offset 1 = **0x10** (fault flag?), 2nd has 0x00 (normal)
+- **State** = 0x00 (Init) in 1st, **0x02** (Precharge) in 2nd
+- **Offset 4** = 0x02 in both (never seen with BT-E6000, possibly fault code)
+- **PackV** = 5 mV / 0 mV — essentially **0V** (BMS FETs disconnected)
+- **MaxV / MinV** = 0 / 0 — no cell voltage reading
+- **Mx** (NTC MAX) = 0x00 = **0°C** — one NTC sensor defective
+- **Av** (NTC AVG) = 0x19 = 25°C, **T3** (TH003 MOSFET) = 0x19 = 25°C — normal
+- **SOC** = 0x1D = **29%** (EEPROM-cached value)
 
 ### Diagnosis
 
