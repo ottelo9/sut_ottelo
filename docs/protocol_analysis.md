@@ -377,13 +377,69 @@ BT-E6000 (healthy, for comparison):
 
 **Recommended next step**: Measure cell voltages directly at the balance connector to determine if cells are alive or deeply discharged.
 
+## Command Register Scan
+
+Full command scan performed by [michielvg](https://github.com/michielvg/Shimano_BT-E6000_BMS/discussions/3#discussioncomment-16463975) on a BT-E6000 BMS PCB **without cells connected**. Each command was sent as a 2-byte request (`cmd 00`) instead of the charger's usual 5-byte format — the BMS responds to both.
+
+Commands that return `<cmd> 01` = "command unknown" (not listed). Timeouts also indicate possible valid commands (0x31 is known but timed out).
+
+### Responding Commands
+
+| Cmd | Resp Len | Response Payload (after cmd echo) | Notes |
+|-----|----------|-----------------------------------|-------|
+| 0x10 | 22 | `25 00 00 02 00 E5 00 66 00 08 00 ...` | Telemetry (known). Status=0x25 (no cells), offset 4=0x02 |
+| 0x11 | 9 | `25 47 00 0F 03 00 00 64` | Device info (known). Byte 1=0x25 |
+| 0x12 | 10 | `25 00 E1 00 00 90 10 0F 00` | **NEW** — unknown |
+| 0x13 | 32 | `25 00 01 01 00 04 0A 01 02 52 0A ...` | **NEW** — large config/calibration block? |
+| 0x20 | 3 | `25 00` | **NEW** — unknown |
+| 0x21 | 3 | `25 FF` | Shutdown (known). Byte 2=0xFF (vs 0x00 with cells) |
+| 0x30 | 2 | `12` | **NEW** — byte 1=0x12, different status format |
+| 0x31 | — | — | **TIMEOUT** (known from motor, no response here) |
+| 0x32 | 2 | `12` | Trip/Config (known). Byte 1=0x12 |
+| 0xA0 | 43 | `00 00 00 00 21 00 0E 00 33 00 32 ...` | **NEW** — largest response, diagnostics? |
+| 0xA6 | 7 | `A1 17 60 56 52 4B` | **NEW** — contains ASCII "VRK" |
+| 0xA7 | 7 | `CC 00 F3 55 52 4B` | **NEW** — contains ASCII "URK" |
+| 0xAA | 3 | `90 01` | **NEW** — matches motor telemetry offset 16–17! |
+| 0xAB | 3 | `06 01` | **NEW** — unknown |
+| 0xBB | 4 | `00 00 00` | **NEW** — unknown |
+| 0xCB | 3 | `00 00` | **NEW** — unknown |
+
+### Timeout Commands (possible valid, no response)
+
+0xA1–0xA5, 0xA8–0xA9, 0xAC–0xAF, 0xB0–0xBA, 0xBC–0xBF, 0xCC–0xCF
+
+### Key Observations
+
+**Status byte (byte 1 after cmd echo):**
+
+| Value | Meaning | Seen in |
+|-------|---------|---------|
+| 0x00 | OK / normal | BT-E6000 healthy (our captures), 0xA0+ commands |
+| 0x10 | Fault (BMS lockout?) | BT-E6001 defective (our captures) |
+| 0x12 | ? | 0x30, 0x32 commands |
+| 0x25 | No cells connected | michielvg's PCB scan (0x10–0x21) |
+
+**Offset 4 = 0x02 confirmed as "no cell connection":** michielvg's cellless PCB shows the same `0x02` at offset 4 in 0x10 telemetry as our defective BT-E6001. This is a hardware fault indicator, not a protocol version difference.
+
+**Cmd 0xAA = Register behind motor telemetry offset 16–17:** The response `90 01` is identical to the constant value at telemetry offset 16–17 in motor mode. The motor/display likely reads this register and the BMS embeds it in the telemetry stream.
+
+**Minimal request format works:** The charger sends 5-byte polls (`10 00 00 00 00`), but 2-byte requests (`cmd 00`) also get full responses. The extra bytes in the charger poll are optional padding.
+
+**ASCII in 0xA6/0xA7:** Bytes `56 52 4B` ("VRK") and `55 52 4B` ("URK") could be fragments of a serial number or model identifier.
+
 ## Open Questions
 
 - **Cmd 0x11 payload**: What do the 9 response bytes represent? Battery model, capacity, firmware version?
+- **Cmd 0x12** (10 bytes): New command, purpose unknown
+- **Cmd 0x13** (32 bytes): Large response — calibration data? Cell configuration?
+- **Cmd 0x20** (3 bytes): New command, purpose unknown
+- **Cmd 0xA0** (43 bytes): Largest response — extended diagnostics? Individual cell data?
+- **Cmd 0xA6/0xA7** (7 bytes each): Contain ASCII fragments ("VRK", "URK") — serial number?
 - **Cmd 0x32 payload**: What is the 7-byte motor→battery payload? Date/time? Trip data? Odometer?
 - **Offset 18**: Increases to 0x1C (28) during riding — is this discharge current in some unit?
-- **Offset 16–17 in motor mode**: Constant `0x90 0x01` — what does this represent?
+- **Offset 16–17 in motor mode**: Constant `0x90 0x01` — likely the value of register 0xAA (see command scan)
 - **Poll payload bytes 1–2**: Motor sends 0x02/0x03 — assist mode? System state? Does byte 2 change with assist level (ECO/TRAIL/BOOST)?
+- **Status byte pattern**: 0x00=OK, 0x10=BMS fault, 0x12=?, 0x25=no cells — is this a bitfield or enumeration?
 - Why does the battery respond to every motor poll but only every ~3rd charger poll?
 
 
