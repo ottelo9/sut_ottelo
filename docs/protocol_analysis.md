@@ -5,7 +5,7 @@ Generated via ClaudeAI
 
 Analysis of the UART communication on a Shimano e-bike system:
 - **Charger ↔ Battery**: EC-E6002 charger and BT-E6000 battery
-- **Motor/Display ↔ Battery**: E-bike motor and display communicating with BT-E6000
+- **Motor/Display ↔ Battery**: Motor DU-E6012 and display SC-E6010 communicating with BT-E6000
 
 Battery: 36V, 10S4P Li-Ion, 418Wh.
 Data captured using dual-channel sniffing on a Raspberry Pi — hardware UART on GPIO15 (battery) and pigpio bit-bang serial on GPIO14 (charger/motor).
@@ -57,7 +57,12 @@ Payload is always `10 00 00 00 00` — Cmd 0x10 followed by 4 zero bytes. The ch
 
 ### 3. Battery Telemetry Response — Cmd 0x10 (Length=22)
 
-The battery responds to charger polls with full telemetry data. Not every poll gets a telemetry response — on some polls only a short ack pair is sent.
+The battery sends full 22-byte telemetry responses only at specific moments — **not continuously**:
+
+1. **On initial connection** — first telemetry after charger is plugged in (State 0x00 Init)
+2. **On charging start** — when State transitions to 0x03 (Charging)
+
+After these two responses, the battery only sends short ack pairs (see Section 4). If the charger is disconnected and reconnected, the cycle repeats. This is consistently observed across all captures (see [5x connect/disconnect log](logs/2026-03-28_0850_5x_connect_disconnect.log) and [charger reconnect log](logs/2026-03-28_0920_charger_reconnect.log)).
 
 Example response:
 ```
@@ -69,21 +74,21 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 | Byte(s) | Hex | Field | Value |
 |---------|-----|-------|-------|
 | 0 | `00` | PREFIX | Always 0x00 |
-| 1 | `80` | HEADER | Sender=0x80 (Battery), Seq=0 |
+| 1 | `80` | HEADER | Upper nibble = sender address (0x80 = Battery), lower nibble = sequence number (0 here). Seq cycles 0→1→2→3→0 across successive messages. |
 | 2 | `16` | LENGTH | 22 payload bytes |
-| 3 | `10` | Cmd | 0x10 (Telemetry) |
-| 4 | `00` | ? | Always 0x00 |
-| 5 | `03` | State | 0x03 = Charging (charger), 0x01 = Active (motor) |
-| 6–8 | `00 00 00` | ? | Usually zero |
-| 9–10 | `F7 95` | Pack Voltage | 0x95F7 = 38391 mV (LE) |
-| 11–12 | `04 1E` | Cell V MAX | 0x1E04 = 7684 → 3842 mV |
-| 13–14 | `FC 1D` | Cell V MIN | 0x1DFC = 7676 → 3838 mV |
-| 15 | `16` | NTC MAX | 22°C |
-| 16 | `15` | NTC AVG | 21°C |
-| 17 | `16` | TH002 (MOSFET) | 22°C |
-| 18 | `3D` | **SOC** | **61%** |
-| 19 | `12` | Charge counter | 18 (charger mode) |
-| 20–24 | `00 00 00 00 00` | Reserved | Always zero |
+| 3 | `10` | Cmd (offset 0) | 0x10 (Telemetry) |
+| 4 | `00` | ? (offset 1) | Always 0x00 (BT-E6000). BT-E6001 fault: 0x10 |
+| 5 | `03` | State (offset 2) | 0x03 = Charging (charger), 0x01 = Active (motor) |
+| 6–8 | `00 00 00` | ? (offset 3–5) | BT-E6000: always zero. BT-E6001 fault: `00 02 05` / `00 02 00` |
+| 9–10 | `F7 95` | Pack Voltage (offset 6–7) | 0x95F7 = 38391 mV (LE) |
+| 11–12 | `04 1E` | Cell V MAX (offset 8–9) | 0x1E04 = 7684 → 3842 mV |
+| 13–14 | `FC 1D` | Cell V MIN (offset 10–11) | 0x1DFC = 7676 → 3838 mV |
+| 15 | `16` | NTC MAX (offset 12) | 22°C |
+| 16 | `15` | NTC AVG (offset 13) | 21°C |
+| 17 | `16` | TH002 (offset 14) | 22°C (MOSFET sensor) |
+| 18 | `3D` | **SOC** (offset 15) | **61%** |
+| 19 | `12` | Charge counter (offset 16) | 18 (charger mode) |
+| 20–24 | `00 00 00 00 00` | Reserved (offset 17–21) | Always zero |
 | 25–26 | `87 F1` | CRC-16/X-25 | Over bytes 1–24 (LE) |
 
 #### Telemetry Field Map (payload offsets, starting after LENGTH byte)
@@ -91,19 +96,19 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 | Offset | Bytes | Type | Field | Notes |
 |--------|-------|------|-------|-------|
 | 0 | `10` | uint8 | Cmd | Always 0x10 |
-| 1 | | uint8 | ? | Always 0x00 in all captures |
+| 1 | | uint8 | ? | BT-E6000: always 0x00. BT-E6001 (fault): 0x10 in first response |
 | 2 | | uint8 | State | Charger: 0x00=Init, 0x02=Precharge, 0x03=Charging. Motor: 0x01=Active |
-| 3–4 | | | ? | Always `00 00` |
-| 5–6 | LE uint16 | **Pack Voltage (mV)** | See voltage table below |
-| 7–8 | LE uint16 | **Cell Voltage MAX (0.5 mV)** | Max cell group voltage. Divide by 2 for mV. Confirmed with multimeter. |
-| 9–10 | LE uint16 | **Cell Voltage MIN (0.5 mV)** | Min cell group voltage. Always ~4–8 less than MAX (~2–4 mV). |
-| 11 | uint8 | **NTC Temperature MAX (°C)** | MAX of 2x 10K NTC sensors, value is directly °C. See sensor table below. |
-| 12 | uint8 | **NTC Temperature AVG (°C)** | AVG of 2x 10K NTC sensors, value is directly °C |
-| 13 | uint8 | **TH002 Temperature (°C)** | MOSFET temperature sensor (next to MOSFETs), value is directly °C |
-| 14 | uint8 | **SOC (%)** | **Confirmed**: actual state of charge percentage |
-| 15–16 | | | Context-dependent | Charger: offset 15 = charge counter (resets each session). Motor: 0x90 0x01 (constant, purpose unknown) |
-| 17 | uint8 | ? | Charger: always 0x00. Motor: usually 0x01, increases during riding (seen 0x1C=28 under load) — possibly current-related |
-| 18–20 | | | Reserved | Always `00 00 00` |
+| 3–5 | | | ? | BT-E6000: always `00 00 00`. BT-E6001 (fault): `00 02 05` / `00 02 00` |
+| 6–7 | LE uint16 | **Pack Voltage (mV)** | See voltage table below |
+| 8–9 | LE uint16 | **Cell Voltage MAX (0.5 mV)** | Max cell group voltage. Divide by 2 for mV. Confirmed with multimeter. |
+| 10–11 | LE uint16 | **Cell Voltage MIN (0.5 mV)** | Min cell group voltage. Always ~4–8 less than MAX (~2–4 mV). |
+| 12 | uint8 | **NTC Temperature MAX (°C)** | MAX of 2x 10K NTC sensors, value is directly °C. See sensor table below. |
+| 13 | uint8 | **NTC Temperature AVG (°C)** | AVG of 2x 10K NTC sensors, value is directly °C |
+| 14 | uint8 | **TH002 Temperature (°C)** | MOSFET temperature sensor (next to MOSFETs), value is directly °C |
+| 15 | uint8 | **SOC (%)** | **Confirmed**: actual state of charge percentage |
+| 16–17 | | | Context-dependent | Charger: offset 16 = charge counter (resets each session). Motor: 0x90 0x01 (constant, purpose unknown) |
+| 18 | uint8 | ? | Charger: always 0x00. Motor: usually 0x01, increases during riding (seen 0x1C=28 under load) — possibly current-related |
+| 19–21 | | | Reserved | Always `00 00 00` |
 
 #### Voltage & SOC observations
 
@@ -227,7 +232,7 @@ Both charger and battery use a rotating sequence number (0→1→2→3→0→...
 
 ## Motor/Display ↔ Battery Communication
 
-Captured 2026-03-29 with BT-E6000 in bike frame, communicating with motor and display. Same bus, same addresses, but different poll payload and additional commands.
+Captured 2026-03-29 with BT-E6000 in bike frame, communicating with motor (DU-E6012) and display (SC-E6010). Same bus, same addresses, but different poll payload and additional commands.
 
 ### Differences from Charger
 
@@ -235,8 +240,8 @@ Captured 2026-03-29 with BT-E6000 in bike frame, communicating with motor and di
 |---------|-------------------|---------------|
 | Poll payload bytes 1–2 | Always `00 00` | `02 02` (boot), `03 03` (ready) |
 | Telemetry State (offset 2) | 0x00/0x02/0x03 | 0x01 (Active) |
-| Telemetry offset 15–16 | Charge counter (0–32) | `90 01` (constant) |
-| Telemetry offset 17 | Always 0x00 | 0x01 idle, up to 0x1C under load |
+| Telemetry offset 16–17 | Charge counter (0–32) | `90 01` (constant) |
+| Telemetry offset 18 | Always 0x00 | 0x01 idle, up to 0x1C under load |
 | Additional commands | — | 0x11, 0x32, 0x21 |
 | Telemetry rate | Every ~3rd poll | Every poll |
 
@@ -295,7 +300,7 @@ R:  00 80 03 21 00 00 08 39    Shutdown acknowledgment
 
 During slow ECO mode riding, voltage drops and offset 17 increases:
 
-| Condition | Pack Voltage | Cell V MAX | Cell V MIN | Spread | Offset 17 |
+| Condition | Pack Voltage | Cell V MAX | Cell V MIN | Spread | Offset 18 |
 |-----------|-------------|-----------|-----------|--------|-----------|
 | Idle (motor on) | 38320 mV | 3834 mV | 3830 mV | 4 mV | 0x01 |
 | Driving (ECO) | 38182 mV | 3820 mV | 3815 mV | 5 mV | 0x1C (28) |
@@ -303,17 +308,138 @@ During slow ECO mode riding, voltage drops and offset 17 increases:
 
 - Voltage drop of **~140 mV** under load
 - Cell spread increases from 4 mV to 5 mV under load
-- **Offset 17 jumps to 0x1C (28) during riding** — possibly discharge current indicator
+- **Offset 18 jumps to 0x1C (28) during riding** — possibly discharge current indicator
 - Temperatures stable at 14°C / 14°C / 13–14°C (outdoor, cooler day)
 - SOC = 0x3D (61%) throughout
+
+## BT-E6001 Fault Analysis — Battery Reports 0V, Charging Fails
+
+Captured 2026-04-03 with a defective BT-E6001 battery connected to EC-E6002 charger. The battery communicates on the UART bus but reports zero pack voltage — charger cannot initiate charging.
+
+[Full log](logs/2026-04-03_bt-e6001_charger_fault.log)
+
+### Communication Anomalies
+
+| Observation | BT-E6000 (healthy) | BT-E6001 (defective) |
+|-------------|--------------------|-----------------------|
+| Handshake response | Immediate | 3 retries before response |
+| Charger poll byte 1 | Always `00` | `04` initially, then `00` after handshake |
+| Telemetry offset 1 | Always `0x00` | `0x10` in first response (fault flag?) |
+| Telemetry offset 3–5 | Always `00 00 00` | `00 02 05` (1st) / `00 02 00` (2nd) |
+| Pack voltage (offset 6–7) | 38200–38400 mV | **0 mV** |
+| Cell V MAX/MIN (offset 8–11) | 3820–3840 mV | **0 mV** |
+| NTC MAX / AVG / TH003 (offset 12–14) | 20–39°C | 25°C / 25°C / 25°C (all normal) |
+| SOC (offset 15) | 61–62% | 29% (likely EEPROM-cached) |
+| Reaches State 0x03 | Yes (Charging) | **No** — stuck at 0x02 (Precharge) |
+
+### Telemetry Decode
+
+```
+BT-E6001 (defective):
+   00 82 16 10 10 00 00 02 05 00 00 00 00 00 00 19 19 19 1D 00 00 00 00 00 00 96 1C  ← 1st response (charger poll with 0x04 flag)
+   00 82 16 10 00 02 00 02 00 00 00 00 00 00 00 19 19 19 1D 00 00 01 00 00 00 50 88  ← 2nd response (after handshake, normal poll)
+
+BT-E6000 (healthy, for comparison):
+   00 83 16 10 00 00 00 00 00 B1 95 F4 1D EC 1D 1C 1A 1B 3E 00 00 00 00 00 00 1D 8D  ← Init (State=0x00)
+   00 81 16 10 00 02 00 00 00 BA 95 F4 1D F0 1D 1C 1A 1B 3E 01 00 00 00 00 00 A4 59  ← Precharge (State=0x02)
+
+         ^^ ^^    ^^          ^^^^^ ^^^^^ ^^^^^ ^^ ^^ ^^ ^^
+         LL Cmd   State       PackV  MaxV  MinV Mx Av T2 SOC
+```
+
+| Field | BT-E6001 (defective) | BT-E6000 (healthy) |
+|-------|----------------------|--------------------|
+| Offset 1 | **0x10** (1st) / 0x00 (2nd) | 0x00 (always) |
+| State (offset 2) | 0x00 → 0x02 | 0x00 → 0x02 |
+| Offset 3–5 | **`00 02 05`** / **`00 02 00`** | `00 00 00` (always) |
+| PackV (offset 6–7) | **0 mV** | 38321 mV / 38330 mV |
+| MaxV (offset 8–9) | **0** | 3834 mV / 3834 mV |
+| MinV (offset 10–11) | **0** | 3830 mV / 3832 mV |
+| NTC MAX (offset 12) | 25°C | 28°C |
+| NTC AVG (offset 13) | 25°C | 26°C |
+| TH002/TH003 (offset 14) | 25°C | 27°C |
+| SOC (offset 15) | 29% (EEPROM) | 62% |
+| Charge ctr (offset 16) | 0 / 0 | 0 / 1 |
+
+### Diagnosis
+
+1. **Pack voltage = 0 mV**: The BMS has disconnected the cells from the output (MOSFET protection active). The voltage measurement point is after the FETs.
+2. **Temperature sensors all normal** (25°C at room temperature) — no sensor fault.
+3. **Offset 1 = 0x10**: Likely a **fault/error flag**. Only seen in first telemetry, clears to 0x00 in subsequent responses. Bit 4 set — could indicate specific fault type.
+4. **Offset 3–5 = `00 02 xx`**: Persistent 0x02 at offset 4, never seen with BT-E6000. Offset 5 changes between responses (0x05 → 0x00). Possibly **fault code** or **error state**.
+5. **SOC = 29%**: Likely an EEPROM-stored value from before the fault occurred. Without cell voltage measurement, the BMS cannot calculate live SOC.
+6. **Charger poll byte 1 = 0x04**: The charger sends 0x04 when the handshake failed (3 retries without response). After successful handshake, reverts to 0x00. Possible meaning: error recovery / retry mode.
+
+### Possible Root Causes
+
+- **BMS lockout**: Over-discharge, over-current, or short-circuit protection triggered. FETs remain off.
+- **Cell imbalance or deep discharge**: If cells are below safe voltage threshold (<2.5V), the BMS blocks output. SOC 29% would be plausible for a battery that sat discharged for a long time.
+
+**Recommended next step**: Measure cell voltages directly at the balance connector to determine if cells are alive or deeply discharged.
+
+## Command Register Scan
+
+Full command scan performed by [michielvg](https://github.com/michielvg/Shimano_BT-E6000_BMS/discussions/3#discussioncomment-16463975) on a BT-E6000 BMS PCB **without cells connected**. Each command was sent as a 2-byte request (`cmd 00`) instead of the charger's usual 5-byte format — the BMS responds to both.
+
+Commands that return `<cmd> 01` = "command unknown" (not listed). Timeouts also indicate possible valid commands (0x31 is known but timed out).
+
+### Responding Commands
+
+| Cmd | Resp Len | Response Payload (after cmd echo) | Notes |
+|-----|----------|-----------------------------------|-------|
+| 0x10 | 22 | `25 00 00 02 00 E5 00 66 00 08 00 ...` | Telemetry (known). Status=0x25 (no cells), offset 4=0x02 |
+| 0x11 | 9 | `25 47 00 0F 03 00 00 64` | Device info (known). Byte 1=0x25 |
+| 0x12 | 10 | `25 00 E1 00 00 90 10 0F 00` | **NEW** — unknown |
+| 0x13 | 32 | `25 00 01 01 00 04 0A 01 02 52 0A ...` | **NEW** — large config/calibration block? |
+| 0x20 | 3 | `25 00` | **NEW** — unknown |
+| 0x21 | 3 | `25 FF` | Shutdown (known). Byte 2=0xFF (vs 0x00 with cells) |
+| 0x30 | 2 | `12` | **NEW** — byte 1=0x12, different status format |
+| 0x31 | — | — | **TIMEOUT** (known from motor, no response here) |
+| 0x32 | 2 | `12` | Trip/Config (known). Byte 1=0x12 |
+| 0xA0 | 43 | `00 00 00 00 21 00 0E 00 33 00 32 ...` | **NEW** — largest response, diagnostics? |
+| 0xA6 | 7 | `A1 17 60 56 52 4B` | **NEW** — contains ASCII "VRK" |
+| 0xA7 | 7 | `CC 00 F3 55 52 4B` | **NEW** — contains ASCII "URK" |
+| 0xAA | 3 | `90 01` | **NEW** — matches motor telemetry offset 16–17! |
+| 0xAB | 3 | `06 01` | **NEW** — unknown |
+| 0xBB | 4 | `00 00 00` | **NEW** — unknown |
+| 0xCB | 3 | `00 00` | **NEW** — unknown |
+
+### Timeout Commands (possible valid, no response)
+
+0xA1–0xA5, 0xA8–0xA9, 0xAC–0xAF, 0xB0–0xBA, 0xBC–0xBF, 0xCC–0xCF
+
+### Key Observations
+
+**Status byte (byte 1 after cmd echo):**
+
+| Value | Meaning | Seen in |
+|-------|---------|---------|
+| 0x00 | OK / normal | BT-E6000 healthy (our captures), 0xA0+ commands |
+| 0x10 | Fault (BMS lockout?) | BT-E6001 defective (our captures) |
+| 0x12 | ? | 0x30, 0x32 commands |
+| 0x25 | No cells connected | michielvg's PCB scan (0x10–0x21) |
+
+**Offset 4 = 0x02 confirmed as "no cell connection":** michielvg's cellless PCB shows the same `0x02` at offset 4 in 0x10 telemetry as our defective BT-E6001. This is a hardware fault indicator, not a protocol version difference.
+
+**Cmd 0xAA = Register behind motor telemetry offset 16–17:** The response `90 01` is identical to the constant value at telemetry offset 16–17 in motor mode. The motor/display likely reads this register and the BMS embeds it in the telemetry stream.
+
+**Minimal request format works:** The charger sends 5-byte polls (`10 00 00 00 00`), but 2-byte requests (`cmd 00`) also get full responses. The extra bytes in the charger poll are optional padding.
+
+**ASCII in 0xA6/0xA7:** Bytes `56 52 4B` ("VRK") and `55 52 4B` ("URK") could be fragments of a serial number or model identifier.
 
 ## Open Questions
 
 - **Cmd 0x11 payload**: What do the 9 response bytes represent? Battery model, capacity, firmware version?
+- **Cmd 0x12** (10 bytes): New command, purpose unknown
+- **Cmd 0x13** (32 bytes): Large response — calibration data? Cell configuration?
+- **Cmd 0x20** (3 bytes): New command, purpose unknown
+- **Cmd 0xA0** (43 bytes): Largest response — extended diagnostics? Individual cell data?
+- **Cmd 0xA6/0xA7** (7 bytes each): Contain ASCII fragments ("VRK", "URK") — serial number?
 - **Cmd 0x32 payload**: What is the 7-byte motor→battery payload? Date/time? Trip data? Odometer?
-- **Offset 17**: Increases to 0x1C (28) during riding — is this discharge current in some unit?
-- **Offset 15–16 in motor mode**: Constant `0x90 0x01` — what does this represent?
+- **Offset 18**: Increases to 0x1C (28) during riding — is this discharge current in some unit?
+- **Offset 16–17 in motor mode**: Constant `0x90 0x01` — likely the value of register 0xAA (see command scan)
 - **Poll payload bytes 1–2**: Motor sends 0x02/0x03 — assist mode? System state? Does byte 2 change with assist level (ECO/TRAIL/BOOST)?
+- **Status byte pattern**: 0x00=OK, 0x10=BMS fault, 0x12=?, 0x25=no cells — is this a bitfield or enumeration?
 - Why does the battery respond to every motor poll but only every ~3rd charger poll?
 
 
@@ -413,10 +539,16 @@ Battery powered on, slow riding in ECO assist mode, then powered off.
 
 [Full log](logs/2026-03-29_test_with_bike_driving_2.log)
 
-Voltage drop visible during riding: 38320 mV (idle) → 38182 mV (under load). Offset 17 increases from 0x01 to 0x1C (28) during motor assist. TH002 dropped from 14°C to 13°C (outdoor cooling). One garbled message visible (bus contention during driving).
+Voltage drop visible during riding: 38320 mV (idle) → 38182 mV (under load). Offset 18 increases from 0x01 to 0x1C (28) during motor assist. TH002 dropped from 14°C to 13°C (outdoor cooling). One garbled message visible (bus contention during driving).
 
 ### 2026-03-29 — Bike power on/off, test 3 (61% SOC, ~14°C)
 
 Short on/off cycle, same as test 1. Multiple handshake retries visible at startup.
 
 [Full log](logs/2026-03-29_test_with_bike_on_3.log)
+
+### 2026-04-03 — BT-E6001 charger fault (29% SOC cached, ~25°C)
+
+Defective BT-E6001 battery. Charger connects but battery reports 0V pack voltage. Charging never starts (stuck at Precharge). See [BT-E6001 Fault Analysis](#bt-e6001-fault-analysis--battery-reports-0v-charging-fails) for full decode.
+
+[Full log](logs/2026-04-03_bt-e6001_charger_fault.log)

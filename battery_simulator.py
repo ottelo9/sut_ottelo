@@ -83,17 +83,18 @@ class BatteryState:
 
         payload = bytes([
             CMD_TELEMETRY,              # 0: Cmd
-            self.state,                 # 1: State
-            0x00, 0x00, 0x00,           # 2-4: Unknown
-            v_lo, v_hi,                 # 5-6: Pack voltage (LE)
-            cv_max_lo, cv_max_hi,       # 7-8: Cell V MAX (LE, 0.5mV)
-            cv_min_lo, cv_min_hi,       # 9-10: Cell V MIN (LE, 0.5mV)
-            self.ntc_max,               # 11: NTC MAX (°C)
-            self.ntc_avg,               # 12: NTC AVG (°C)
-            self.th002_mosfet,          # 13: TH002 MOSFET (°C)
-            self.soc_percent,           # 14: SOC (%)
-            self.charge_counter,        # 15: Charge counter
-            0x00, 0x00, 0x00, 0x00, 0x00  # 16-20: Reserved
+            0x00,                       # 1: Unknown (always 0x00)
+            self.state,                 # 2: State
+            0x00, 0x00, 0x00,           # 3-5: Unknown
+            v_lo, v_hi,                 # 6-7: Pack voltage (LE)
+            cv_max_lo, cv_max_hi,       # 8-9: Cell V MAX (LE, 0.5mV)
+            cv_min_lo, cv_min_hi,       # 10-11: Cell V MIN (LE, 0.5mV)
+            self.ntc_max,               # 12: NTC MAX (°C)
+            self.ntc_avg,               # 13: NTC AVG (°C)
+            self.th002_mosfet,          # 14: TH002 MOSFET (°C)
+            self.soc_percent,           # 15: SOC (%)
+            self.charge_counter,        # 16: Charge counter
+            0x00, 0x00, 0x00, 0x00, 0x00  # 17-21: Reserved
         ])
         return payload
 
