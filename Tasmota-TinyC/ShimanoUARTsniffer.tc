@@ -68,12 +68,19 @@ void processMessage() {
     int expected = 3 + payload_len + 2;
 
     // Build hex output using sprintfAppend (reliable in TinyC)
-    if (sender == 0x80 || sender == 0xC0) {
-        hex_out = "BAT:";
+    // Sender addresses:
+    // 0x00 = Charger/Motor poll, 0x40 = Charger/Motor handshake
+    // 0x80 = Battery telemetry,  0xC0 = Battery handshake
+    if (sender == 0xC0) {
+        hex_out = "R :";
+    } else if (sender == 0x80) {
+        hex_out = "R :";
     } else if (sender == 0x40) {
-        hex_out = "CHG:";
+        hex_out = "R2:";
+    } else if (sender == 0x00) {
+        hex_out = "R2:";
     } else {
-        hex_out = "DEV:";
+        hex_out = "??:";
     }
 
     int i = 0;
