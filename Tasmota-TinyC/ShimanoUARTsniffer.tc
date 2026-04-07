@@ -35,42 +35,28 @@ int  last_byte_time = 0;     // millis() of last received byte
 int  msg_count = 0;          // total messages received
 int  err_count = 0;          // framing errors
 char hex_out[200];           // formatted output string
-char hex_byte[4];            // single byte hex scratch
 int  startup_printed = 0;    // flag: waiting message shown once
-
-// ---- Hex formatting ----
-void byteToHex(int b, char dst[]) {
-    int hi = (b >> 4) & 0x0F;
-    int lo = b & 0x0F;
-    if (hi < 10) {
-        dst[0] = 48 + hi;   // '0'-'9'
-    } else {
-        dst[0] = 55 + hi;   // 'A'-'F'
-    }
-    if (lo < 10) {
-        dst[1] = 48 + lo;
-    } else {
-        dst[1] = 55 + lo;
-    }
-    dst[2] = 0;
-}
 
 // ---- Process complete message ----
 void processMessage() {
-    if (msg_len < 3) {
-        // Too short — noise or partial
+    if (msg_len < 5) {
+        // Too short — noise or partial (min valid: prefix+header+len+2xCRC)
+        if (msg_len > 0) {
+            err_count++;
+        }
+        msg_len = 0;
+        return;
+    }
+
+    // Check PREFIX — must be 0x00
+    int prefix = msg[0] & 0xFF;
+    if (prefix != 0x00) {
         err_count++;
         msg_len = 0;
         return;
     }
 
     msg_count++;
-
-    // Check PREFIX
-    int prefix = msg[0] & 0xFF;
-    if (prefix != 0x00) {
-        err_count++;
-    }
 
     // Decode header
     int header = msg[1] & 0xFF;
@@ -81,29 +67,19 @@ void processMessage() {
     // Expected total: 1(prefix) + 1(header) + 1(length) + payload + 2(CRC)
     int expected = 3 + payload_len + 2;
 
-    // Build hex output string
-    hex_out = "";
-
-    // Tag by sender
+    // Build hex output using sprintfAppend (reliable in TinyC)
     if (sender == 0x80 || sender == 0xC0) {
-        hex_out = "BAT: ";
+        sprintf(hex_out, "BAT:");
     } else if (sender == 0x40) {
-        hex_out = "CHG: ";
-    } else if (sender == 0x00) {
-        hex_out = "DEV: ";
+        sprintf(hex_out, "CHG:");
     } else {
-        hex_out = "???: ";
+        sprintf(hex_out, "DEV:");
     }
 
-    // Append all bytes as hex
     int i = 0;
     while (i < msg_len) {
         int b = msg[i] & 0xFF;
-        byteToHex(b, hex_byte);
-        hex_out += hex_byte;
-        if (i < msg_len - 1) {
-            hex_out += " ";
-        }
+        sprintfAppend(hex_out, " %02X", b);
         i++;
     }
 
