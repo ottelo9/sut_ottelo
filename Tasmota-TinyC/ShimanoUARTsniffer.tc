@@ -69,11 +69,11 @@ void processMessage() {
 
     // Build hex output using sprintfAppend (reliable in TinyC)
     if (sender == 0x80 || sender == 0xC0) {
-        sprintf(hex_out, "BAT:");
+        hex_out = "BAT:";
     } else if (sender == 0x40) {
-        sprintf(hex_out, "CHG:");
+        hex_out = "CHG:";
     } else {
-        sprintf(hex_out, "DEV:");
+        hex_out = "DEV:";
     }
 
     int i = 0;
