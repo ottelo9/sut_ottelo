@@ -1,11 +1,11 @@
-// ShimanoSniffer_CH2.tc — Slot 1: Charger/Motor TX line (R2:)
+// ShimanoSniffer_CH2.tc — Slot 1: Battery RX pin (B-RX:)
 // Captures charger/motor messages: polls, handshakes.
 //
 // Run in TinyC Slot 1. Pair with ShimanoSniffer_CH1.tc in Slot 0.
 // Both output to the same Tasmota web console.
 
 // ---- Configuration ----
-#define RX_PIN       16      // GPIO connected to Charger/Motor TX
+#define RX_PIN       16      // GPIO connected to Battery RX pin
 #define BAUD         9600
 #define SERIAL_CFG   3       // 8N1
 #define BUF_SIZE     256
@@ -43,7 +43,7 @@ void processMessage() {
     int payload_len = msg[2] & 0xFF;
     int expected = 3 + payload_len + 2;
 
-    hex_out = "R2:";
+    hex_out = "B-RX:";
 
     int i = 0;
     while (i < msg_len) {
@@ -92,7 +92,7 @@ void EveryLoop() {
 
 void WebCall() {
     char buf[80];
-    sprintf(buf, "{s}CH2 Charger (R2:){m}%d msgs / %d err{e}", msg_count, err_count);
+    sprintf(buf, "{s}CH2 B-RX{m}%d msgs / %d err{e}", msg_count, err_count);
     webSend(buf);
 }
 
@@ -113,6 +113,6 @@ int main() {
     err_count = 0;
     last_byte_time = millis();
 
-    printStr("=== CH2: Charger/Motor TX (R2:) on GPIO16 ===");
+    printStr("=== CH2: B-RX on GPIO16 ===");
     return 0;
 }

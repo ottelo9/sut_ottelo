@@ -1,4 +1,4 @@
-// ShimanoSniffer_CH1.tc — Slot 0: Battery TX line (R:)
+// ShimanoSniffer_CH1.tc — Slot 0: Battery TX pin (B-TX:)
 // Captures battery responses: telemetry, handshakes, acks.
 // Decodes Cmd 0x10 telemetry inline.
 //
@@ -6,7 +6,7 @@
 // Both output to the same Tasmota web console.
 
 // ---- Configuration ----
-#define RX_PIN       17      // GPIO connected to Battery TX
+#define RX_PIN       17      // GPIO connected to Battery TX pin
 #define BAUD         9600
 #define SERIAL_CFG   3       // 8N1
 #define BUF_SIZE     256
@@ -45,7 +45,7 @@ void processMessage() {
     int payload_len = msg[2] & 0xFF;
     int expected = 3 + payload_len + 2;
 
-    hex_out = "R :";
+    hex_out = "B-TX:";
 
     int i = 0;
     while (i < msg_len) {
@@ -113,7 +113,7 @@ void EveryLoop() {
 
 void WebCall() {
     char buf[80];
-    sprintf(buf, "{s}CH1 Battery (R:){m}%d msgs / %d err{e}", msg_count, err_count);
+    sprintf(buf, "{s}CH1 B-TX{m}%d msgs / %d err{e}", msg_count, err_count);
     webSend(buf);
 }
 
@@ -134,6 +134,6 @@ int main() {
     err_count = 0;
     last_byte_time = millis();
 
-    printStr("=== CH1: Battery TX (R:) on GPIO17 ===");
+    printStr("=== CH1: B-TX on GPIO17 ===");
     return 0;
 }
