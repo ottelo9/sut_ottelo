@@ -1,0 +1,201 @@
+// ShimanoUARTsniffer.tc — Shimano E-Bike UART Protocol Sniffer
+// Sniffs 9600 baud half-duplex UART between battery/charger/motor.
+// Outputs decoded messages to Tasmota web console via print().
+//
+// TinyC only supports ONE serial port, so only one channel at a time.
+// Configure RX_PIN below to select which line to sniff:
+//   Battery TX (responses)  or  Charger/Motor TX (polls)
+//
+// Hardware: ESP32-WROOM, connect RX_PIN to the TX line you want to sniff.
+//           GND must be shared with the Shimano bus.
+//           Do NOT connect ESP32 TX to the bus (TX_PIN = -1).
+
+// ---- Configuration ----
+#define RX_PIN       16      // GPIO for RX (change to your wiring)
+#define TX_PIN       -1      // -1 = disabled, we only listen
+#define BAUD         9600
+#define SERIAL_CFG   3       // 8N1
+#define BUF_SIZE     256     // serial RX buffer
+
+// Message detection: gap > GAP_MS between bytes = new message
+#define GAP_MS       4
+
+// Maximum message size (Shimano max seen: 46 bytes for Cmd 0xA0)
+#define MAX_MSG      64
+
+// ---- Globals ----
+char msg[MAX_MSG];           // message accumulation buffer
+int  msg_len = 0;            // current bytes in buffer
+int  last_byte_time = 0;     // millis() of last received byte
+int  msg_count = 0;          // total messages received
+int  err_count = 0;          // framing errors
+char hex_out[200];           // formatted output string
+char hex_byte[4];            // single byte hex scratch
+
+// ---- Hex formatting ----
+void byteToHex(int b, char dst[]) {
+    int hi = (b >> 4) & 0x0F;
+    int lo = b & 0x0F;
+    if (hi < 10) {
+        dst[0] = 48 + hi;   // '0'-'9'
+    } else {
+        dst[0] = 55 + hi;   // 'A'-'F'
+    }
+    if (lo < 10) {
+        dst[1] = 48 + lo;
+    } else {
+        dst[1] = 55 + lo;
+    }
+    dst[2] = 0;
+}
+
+// ---- Process complete message ----
+void processMessage() {
+    if (msg_len < 3) {
+        // Too short — noise or partial
+        err_count++;
+        msg_len = 0;
+        return;
+    }
+
+    msg_count++;
+
+    // Check PREFIX
+    int prefix = msg[0] & 0xFF;
+    if (prefix != 0x00) {
+        err_count++;
+    }
+
+    // Decode header
+    int header = msg[1] & 0xFF;
+    int sender = header & 0xF0;
+    int seq = header & 0x0F;
+    int payload_len = msg[2] & 0xFF;
+
+    // Expected total: 1(prefix) + 1(header) + 1(length) + payload + 2(CRC)
+    int expected = 3 + payload_len + 2;
+
+    // Build hex output string
+    hex_out = "";
+
+    // Tag by sender
+    if (sender == 0x80 || sender == 0xC0) {
+        hex_out = "BAT: ";
+    } else if (sender == 0x40) {
+        hex_out = "CHG: ";
+    } else if (sender == 0x00) {
+        hex_out = "DEV: ";
+    } else {
+        hex_out = "???: ";
+    }
+
+    // Append all bytes as hex
+    int i = 0;
+    while (i < msg_len) {
+        int b = msg[i] & 0xFF;
+        byteToHex(b, hex_byte);
+        hex_out += hex_byte;
+        if (i < msg_len - 1) {
+            hex_out += " ";
+        }
+        i++;
+    }
+
+    // Append length check
+    if (msg_len != expected && payload_len > 0) {
+        sprintfAppend(hex_out, " [len:%d exp:%d]", msg_len, expected);
+    }
+
+    // Decode telemetry if Cmd 0x10 with 22-byte payload
+    if (payload_len == 22 && msg_len >= 25) {
+        int cmd = msg[3] & 0xFF;
+        if (cmd == 0x10) {
+            int state = msg[5] & 0xFF;
+            // Pack voltage at payload offset 6-7 = msg bytes 9-10 (LE)
+            int pack_v = (msg[9] & 0xFF) | ((msg[10] & 0xFF) << 8);
+            // Cell MAX at payload offset 8-9 = msg bytes 11-12 (LE, 0.5mV)
+            int cell_max_raw = (msg[11] & 0xFF) | ((msg[12] & 0xFF) << 8);
+            int cell_max = cell_max_raw / 2;
+            // Cell MIN at payload offset 10-11 = msg bytes 13-14 (LE, 0.5mV)
+            int cell_min_raw = (msg[13] & 0xFF) | ((msg[14] & 0xFF) << 8);
+            int cell_min = cell_min_raw / 2;
+            // Temps at payload offset 12-14 = msg bytes 15-17
+            int ntc_max = msg[15] & 0xFF;
+            int ntc_avg = msg[16] & 0xFF;
+            int th_mos  = msg[17] & 0xFF;
+            // SOC at payload offset 15 = msg byte 18
+            int soc = msg[18] & 0xFF;
+
+            sprintfAppend(hex_out, " | St=%d V=%d Cmax=%d Cmin=%d T=%d/%d/%d SOC=%d%%",
+                state, pack_v, cell_max, cell_min,
+                ntc_max, ntc_avg, th_mos, soc);
+        }
+    }
+
+    // Print to Tasmota web console
+    printString(hex_out);
+
+    msg_len = 0;
+}
+
+// ---- Callbacks ----
+
+void EveryLoop() {
+    int now = millis();
+
+    // Check for inter-message gap
+    if (msg_len > 0 && (now - last_byte_time) > GAP_MS) {
+        processMessage();
+    }
+
+    // Read all available bytes
+    while (serialAvailable() > 0) {
+        int b = serialRead();
+        if (b >= 0) {
+            last_byte_time = millis();
+            if (msg_len < MAX_MSG) {
+                msg[msg_len] = b;
+                msg_len++;
+            } else {
+                // Overflow — dump and reset
+                processMessage();
+                msg[0] = b;
+                msg_len = 1;
+            }
+        }
+    }
+}
+
+void EverySecond() {
+    // Periodic status (only if no messages flowing)
+    if (msg_count == 0) {
+        printStr("Sniffer: waiting for data...");
+    }
+}
+
+void WebCall() {
+    char buf[80];
+    sprintf(buf, "{s}Shimano Sniffer{m}%d msgs / %d err{e}", msg_count, err_count);
+    webSend(buf);
+}
+
+// ---- Main ----
+int main() {
+    int ok = serialBegin(RX_PIN, TX_PIN, BAUD, SERIAL_CFG, BUF_SIZE);
+    if (ok < 0) {
+        printStr("ERROR: serialBegin failed!");
+        return -1;
+    }
+
+    msg_len = 0;
+    msg_count = 0;
+    err_count = 0;
+    last_byte_time = millis();
+
+    printStr("=== Shimano UART Sniffer ===");
+    sprintfAppend(hex_out, "RX pin: GPIO%d, Baud: %d", RX_PIN, BAUD);
+    printString(hex_out);
+    printStr("Listening...");
+
+    return 0;
+}
