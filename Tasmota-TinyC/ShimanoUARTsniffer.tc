@@ -36,6 +36,7 @@ int  msg_count = 0;          // total messages received
 int  err_count = 0;          // framing errors
 char hex_out[200];           // formatted output string
 char hex_byte[4];            // single byte hex scratch
+int  startup_printed = 0;    // flag: waiting message shown once
 
 // ---- Hex formatting ----
 void byteToHex(int b, char dst[]) {
@@ -178,9 +179,10 @@ void EveryLoop() {
 }
 
 void EverySecond() {
-    // Periodic status (only if no messages flowing)
-    if (msg_count == 0) {
+    // Print waiting message only once at startup
+    if (msg_count == 0 && !startup_printed) {
         printStr("Sniffer: waiting for data...");
+        startup_printed = 1;
     }
 }
 
