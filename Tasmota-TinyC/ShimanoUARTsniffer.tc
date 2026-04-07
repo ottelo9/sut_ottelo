@@ -23,6 +23,11 @@
 // Maximum message size (Shimano max seen: 46 bytes for Cmd 0xA0)
 #define MAX_MSG      64
 
+// File logging: max log file size in bytes (0 = disabled)
+// When file reaches LOG_MAX_SIZE, it is deleted and restarted.
+#define LOG_FILE     "/shimano.log"
+#define LOG_MAX_SIZE 100000  // ~100 KB, 0 = logging disabled
+
 // ---- Globals ----
 char msg[MAX_MSG];           // message accumulation buffer
 int  msg_len = 0;            // current bytes in buffer
@@ -135,6 +140,12 @@ void processMessage() {
     // Print to Tasmota web console
     printString(hex_out);
 
+    // Write to log file if enabled
+    if (LOG_MAX_SIZE > 0) {
+        hex_out += "\n";
+        fileLog(LOG_FILE, hex_out, LOG_MAX_SIZE);
+    }
+
     msg_len = 0;
 }
 
@@ -177,6 +188,11 @@ void WebCall() {
     char buf[80];
     sprintf(buf, "{s}Shimano Sniffer{m}%d msgs / %d err{e}", msg_count, err_count);
     webSend(buf);
+}
+
+void OnExit() {
+    serialClose();
+    printStr("Sniffer stopped, serial closed.");
 }
 
 // ---- Main ----
