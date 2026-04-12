@@ -64,6 +64,18 @@ if [ ! -f .venv/.deps_installed ] || [ requirements.txt -nt .venv/.deps_installe
     touch .venv/.deps_installed
 fi
 
+# install pigpio if not available (needed for dual-channel sniffing)
+if ! command -v pigpiod &>/dev/null; then
+    echo "Installing pigpio from source..."
+    PIGPIO_TMP=$(mktemp -d)
+    wget -q -O "$PIGPIO_TMP/pigpio.zip" https://github.com/joan2937/pigpio/archive/refs/heads/master.zip
+    unzip -q "$PIGPIO_TMP/pigpio.zip" -d "$PIGPIO_TMP"
+    make -C "$PIGPIO_TMP/pigpio-master" -j$(nproc)
+    sudo make -C "$PIGPIO_TMP/pigpio-master" install
+    rm -rf "$PIGPIO_TMP"
+    echo "pigpio installed"
+fi
+
 # run script
 echo "Start tool"
 echo "================"
