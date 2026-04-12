@@ -9,12 +9,16 @@ It can capture messages from Shimano components (battery, motor, display) and op
 ## Installation
 
 ```bash
+sudo apt update && sudo apt install -y git
 cd ~
 git clone https://github.com/ottelo9/sut_ottelo.git
 cd sut_ottelo
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+```
+
+Update:
+```bash
+cd ~/sut_ottelo
+git pull
 ```
 
 ## Running the Tool
