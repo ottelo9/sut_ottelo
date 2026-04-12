@@ -5,6 +5,8 @@ from uart_interface import UARTInterface
 from enum import Flag, auto
 from datetime import datetime
 
+MAX_PAYLOAD_LENGTH = 32  # max known Shimano payload: 22 bytes (Cmd 0x10 telemetry)
+
 class MessageDirection(Flag):
     RX = auto()    # subscriber wants incoming messages
     TX = auto()    # subscriber wants outgoing messages
@@ -154,6 +156,10 @@ class MessageDispatcher:
             # Check prefix
             if self.rx_buffer[0] != 0x00:
                 # discard until next possible prefix
+                self.rx_buffer.pop(0)
+                continue
+            # Reject unreasonable payload lengths (bit-bang noise protection)
+            if self.rx_buffer[2] > MAX_PAYLOAD_LENGTH:
                 self.rx_buffer.pop(0)
                 continue
 
