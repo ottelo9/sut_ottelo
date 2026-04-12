@@ -294,7 +294,7 @@ def main():
             pi = pigpio.pi()
             if pi.connected:
                 pi.set_pull_up_down(14, pigpio.PUD_OFF)
-                pi.set_pull_up_down(15, pigpio.PUD_OFF)
+                # GPIO15: keep default — hardware UART RX may need pull-up
                 pi.stop()
         except Exception:
             pass
