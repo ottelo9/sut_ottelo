@@ -6,6 +6,17 @@ It can capture messages from Shimano components (battery, motor, display) and op
 <img src="./images/setup.jpg" alt="Raspberry pi connected to BT-E6000 PCB" width="300">
 
 
+## Installation
+
+```bash
+cd ~
+git clone https://github.com/ottelo9/sut_ottelo.git
+cd sut_ottelo
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
 ## Running the Tool
 Make sure your uart0/serial0 is enabled, and raspberry pi bt is not using it.
 
