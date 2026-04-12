@@ -66,14 +66,19 @@ fi
 
 # install pigpio if not available (needed for dual-channel sniffing)
 if ! command -v pigpiod &>/dev/null; then
-    echo "Installing pigpio from source..."
-    PIGPIO_TMP=$(mktemp -d)
-    wget -q -O "$PIGPIO_TMP/pigpio.zip" https://github.com/joan2937/pigpio/archive/refs/heads/master.zip
-    unzip -q "$PIGPIO_TMP/pigpio.zip" -d "$PIGPIO_TMP"
-    make -C "$PIGPIO_TMP/pigpio-master" -j$(nproc)
-    sudo make -C "$PIGPIO_TMP/pigpio-master" install
-    rm -rf "$PIGPIO_TMP"
-    echo "pigpio installed"
+    echo "Installing pigpio..."
+    if sudo apt-get install -y pigpio 2>/dev/null; then
+        echo "pigpio installed via apt"
+    else
+        echo "apt failed, building from source..."
+        PIGPIO_TMP=$(mktemp -d)
+        wget -q -O "$PIGPIO_TMP/pigpio.zip" https://github.com/joan2937/pigpio/archive/refs/heads/master.zip
+        unzip -q "$PIGPIO_TMP/pigpio.zip" -d "$PIGPIO_TMP"
+        make -C "$PIGPIO_TMP/pigpio-master" -j$(nproc)
+        sudo make -C "$PIGPIO_TMP/pigpio-master" install
+        rm -rf "$PIGPIO_TMP"
+        echo "pigpio installed from source"
+    fi
 fi
 
 # run script
