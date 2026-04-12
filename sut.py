@@ -278,6 +278,22 @@ def main():
     # Logger
     logger = make_logger(config.get_section("logger"))
 
+    # Set both GPIO pins to high-impedance input (no pull-up/down)
+    # before opening serial. The RPi's default UART alt-function on
+    # GPIO15 enables an internal pull-up that disturbs the battery bus.
+    if mode == MODE_LOGGING:
+        try:
+            import pigpio
+            pi = pigpio.pi()
+            if pi.connected:
+                pi.set_mode(14, pigpio.INPUT)
+                pi.set_mode(15, pigpio.INPUT)
+                pi.set_pull_up_down(14, pigpio.PUD_OFF)
+                pi.set_pull_up_down(15, pigpio.PUD_OFF)
+                pi.stop()
+        except Exception:
+            pass
+
     # Open serial device (CH1: hardware UART)
     try:
         serial_uart = PySerialUART.from_config(uart_config)
