@@ -158,7 +158,7 @@ class MessageDispatcher:
                 continue
 
             handled: bool = False
-            error: bool = True
+            error: bool = False
             # Try all registered Msg classes to unpack
             for msg_cls in self.message_map.values():
                 msg_obj, status = msg_cls.unpack(self.rx_buffer)

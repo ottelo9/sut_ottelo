@@ -324,7 +324,10 @@ def main():
 
         def _reader_loop(disp, stop):
             while not stop.is_set():
-                disp.poll()
+                try:
+                    disp.poll()
+                except Exception as e:
+                    print_message(f"{RED}Reader error: {e}{RESET}")
                 time.sleep(0.001)
 
         threading.Thread(target=_reader_loop, args=(dispatcher, stop_event), daemon=True).start()
