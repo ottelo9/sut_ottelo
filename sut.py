@@ -285,20 +285,6 @@ def main():
         print(f"{RED}Serial problem{RESET}")
         sys.exit(1)
 
-    # Disable internal pull-ups AFTER serial is opened.
-    # The kernel UART driver sets GPIO15 to ALT0 with pull-up,
-    # which disturbs the battery bus. We override just the pull setting.
-    if mode == MODE_LOGGING:
-        try:
-            import pigpio
-            pi = pigpio.pi()
-            if pi.connected:
-                pi.set_pull_up_down(14, pigpio.PUD_OFF)
-                pi.set_pull_up_down(15, pigpio.PUD_OFF)
-                pi.stop()
-        except Exception:
-            pass
-
     dispatcher = MessageDispatcher(serial_uart)
     dispatcher.register_message_type(None, Msg)
     dispatcher.subscribe(None, print_handler, direction=MessageDirection.BOTH)
