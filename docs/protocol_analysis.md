@@ -42,7 +42,72 @@ Battery → 00 C1 00 35 DC       Ping (Sender=0xC0, Seq=1, Length=0, CRC valid)
 Charger → 00 41 00 F9 50       Pong (Sender=0x40, Seq=1, Length=0, CRC valid)
 ```
 
-### 2. Charger Poll — Cmd 0x10 (Length=5)
+### 2. Charger Startup Commands
+
+After the handshake, the charger exchanges two commands before starting telemetry polls. Captured 2026-04-12 with dual-channel ordered output ([full log](logs/2026-04-12_charger_dual_channel.log)).
+
+**Full charger startup sequence:**
+```
+1. Handshake:   R2: 00 42 00 91 7A        →  R: 00 C2 00 5D F6
+2. Cmd 0x30:    R2: 00 03 11 30 02 01 ... →  R: 00 83 12 30 00 ...      (authentication)
+3. Cmd 0x31:    R2: 00 00 0B 31 9E 01 ... →  R: 00 80 12 31 00 9F 01 ... (battery specs)
+4. First poll:  R2: 00 01 05 10 00 ...     →  R: 00 81 16 10 ... State=0x00 (Init)
+5. Precharge:   R2: 00 02 05 10 00 ...     →  R: 00 82 16 10 ... State=0x02
+6. Charging:    R2: 00 00 05 10 00 ...     →  R: 00 80 16 10 ... State=0x03
+7. Steady:      Every poll → full telemetry response
+```
+
+#### Cmd 0x30 — Authentication (Length=17 request, Length=18 response)
+
+The charger sends a 17-byte challenge; the battery responds with 18 bytes. Both the challenge and response data change every session — consistent with a cryptographic authentication handshake.
+
+```
+Session 1:
+R2: 00 03 11 30 02 01 12 77 4F 29 1F 48 4F 59 7A D9 F8 0D 6B 04 F7 0D
+R:  00 83 12 30 00 BF 6B C1 2E 2F 61 9B E1 26 33 92 FD EE 4A C8 D1 CB B3
+
+Session 2 (reconnect):
+R2: 00 03 11 30 02 01 20 19 04 E5 2C 6C A6 12 7C D8 1E 3B 22 04 2E E8
+R:  00 83 12 30 00 CF AB 96 7F 00 33 23 61 B2 8F AA 2C 10 3F EB 38 37 11
+```
+
+| Offset | Request | Response | Notes |
+|--------|---------|----------|-------|
+| 0 | `30` | `30` | Cmd echo |
+| 1 | `02` | `00` | Request: constant `02`. Response: status (0x00 = OK) |
+| 2 | `01` | — | Constant |
+| 3–16 | varies | — | Challenge (14 bytes, changes every session) |
+| 2–17 | — | varies | Response (16 bytes, changes every session) |
+
+michielvg's register scan with a simple 2-byte request (`30 00`) returned only a 2-byte response (`12`). The full 17-byte charger request is required to trigger the 18-byte authentication response.
+
+#### Cmd 0x31 — Battery Specifications (Length=11 request, Length=18 response)
+
+Static exchange — identical across sessions. The charger sends capacity parameters; the battery responds with its own specifications.
+
+```
+R2: 00 00 0B 31 9E 01 A5 01 01 00 05 00 10 00 5E B2
+R:  00 80 12 31 00 9F 01 A9 01 01 00 05 00 28 00 6E 00 D8 01 78 00 6D 4B
+```
+
+| Offset | Type | Request | Response | Notes |
+|--------|------|---------|----------|-------|
+| 0 | uint8 | `31` | `31` | Cmd echo |
+| 1 | — | — | `00` | Status (OK) |
+| 1–2 / 2–3 | LE uint16 | 414 (0x019E) | 415 (0x019F) | Close to rated 418 Wh — remaining capacity? |
+| 3–4 / 4–5 | LE uint16 | 421 (0x01A5) | 425 (0x01A9) | Design capacity? |
+| 5 / 6 | uint8 | 1 | 1 | Unknown |
+| 6 / 7 | uint8 | 0 | 0 | Unknown |
+| 7–8 / 8–9 | LE uint16 | 5 | 5 | Unknown (cell groups? protocol version?) |
+| 9–10 | LE uint16 | 16 (0x10) | — | Request-only field |
+| 10–11 | LE uint16 | — | 40 (0x28) | Max charge current? (4.0A with 0.1A unit?) |
+| 12–13 | LE uint16 | — | 110 (0x6E) | Unknown |
+| 14–15 | LE uint16 | — | 472 (0x01D8) | Unknown |
+| 16–17 | LE uint16 | — | 120 (0x78) | Unknown |
+
+michielvg's register scan timed out on Cmd 0x31 — it requires the full 11-byte charger request, not just a 2-byte probe.
+
+### 3. Charger Poll — Cmd 0x10 (Length=5)
 
 The charger continuously polls the battery at ~1 second intervals, cycling through sequence numbers 0–3:
 
@@ -55,14 +120,13 @@ Charger → 00 03 05 10 00 00 00 00 D9 84    Seq=3
 
 Payload is always `10 00 00 00 00` — Cmd 0x10 followed by 4 zero bytes. The charger is a "dumb" power supply; all charging logic resides in the battery.
 
-### 3. Battery Telemetry Response — Cmd 0x10 (Length=22)
+### 4. Battery Telemetry Response — Cmd 0x10 (Length=22)
 
-The battery sends full 22-byte telemetry responses only at specific moments — **not continuously**:
+During active charging (State 0x03), the battery responds to **every** charger poll with a full 22-byte telemetry message. State transitions: Init (1 poll) → Precharge (1–2 polls) → Charging (continuous).
 
-1. **On initial connection** — first telemetry after charger is plugged in (State 0x00 Init)
-2. **On charging start** — when State transitions to 0x03 (Charging)
+Earlier single-channel captures suggested telemetry only at specific moments with ack pairs in between. Dual-channel ordered output (2026-04-12) reveals this was an artifact of missed CH2 data — the battery actually responds to every poll.
 
-After these two responses, the battery only sends short ack pairs (see Section 4). If the charger is disconnected and reconnected, the cycle repeats. This is consistently observed across all captures (see [5x connect/disconnect log](logs/2026-03-28_0850_5x_connect_disconnect.log) and [charger reconnect log](logs/2026-03-28_0920_charger_reconnect.log)).
+See [dual-channel charger log](logs/2026-04-12_charger_dual_channel.log), [5x connect/disconnect log](logs/2026-03-28_0850_5x_connect_disconnect.log).
 
 Example response:
 ```
@@ -125,6 +189,31 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 - TH002 warmed from 20°C to 21°C during the session
 - After reconnect, charge counter carried over from previous session (24), then resets on state transition
 
+**Capture 2026-04-12** (battery ~69% SOC, ~23°C, charger disconnect/reconnect, dual-channel ordered):
+
+| # | State | Pack Voltage | Cell V MAX | Cell V MIN | Spread | NTC MAX | NTC AVG | TH002 | SOC | ChgCtr |
+|---|-------|-------------|-----------|-----------|--------|---------|---------|-------|-----|--------|
+| 1 | Init | 38845 mV | 3887 mV | 3878 mV | 9 mV | 23°C | 22°C | 24°C | 69% | 4 |
+| 2 | Precharge | 38830 mV | 3885 mV | 3881 mV | 4 mV | 23°C | 22°C | 24°C | 69% | 0 |
+| 3 | Precharge | 38834 mV | 3885 mV | 3882 mV | 3 mV | 23°C | 22°C | 24°C | 69% | 0 |
+| 4 | **Charging** | 38833 mV | 3885 mV | 3882 mV | 3 mV | 23°C | 22°C | 24°C | 69% | 1 |
+| 5 | Charging | **38977 mV** | 3900 mV | 3897 mV | 3 mV | 23°C | 22°C | 24°C | 69% | 14 |
+| 6 | Charging | 38986 mV | 3900 mV | 3897 mV | 3 mV | 23°C | 22°C | 24°C | 69% | 32 |
+| 8 | Charging | 38998 mV | 3903 mV | 3898 mV | 5 mV | 23°C | 22°C | 24°C | 69% | 32 |
+| 9 | Charging | 39009 mV | 3903 mV | 3899 mV | 4 mV | 23°C | 22°C | 24°C | 69% | 33 |
+| — | *Reconnect* | | | | | | | | | |
+| 10 | Init | 38850 mV | 3887 mV | 3884 mV | 3 mV | 24°C | 22°C | 24°C | 69% | 4 |
+| 11 | Precharge | 38827 mV | 3885 mV | 3881 mV | 4 mV | 24°C | 22°C | 24°C | 69% | 0 |
+| 12 | Charging | 38833 mV | 3885 mV | 3882 mV | 3 mV | 24°C | 22°C | 24°C | 69% | 1 |
+| 13 | Charging | 38978 mV | 3900 mV | 3896 mV | 4 mV | 24°C | 22°C | 24°C | 69% | 16 |
+| 14 | Charging | 38998 mV | 3902 mV | 3898 mV | 4 mV | 24°C | 22°C | 24°C | 69% | 32 |
+| 17 | Charging | 39004 mV | 3904 mV | 3898 mV | 6 mV | 24°C | 22°C | 24°C | 69% | 32 |
+
+- **Voltage jump at Charging start**: 38833 → 38977 mV (+144 mV). This is the IR drop from charge current (~1.8A × ~0.08Ω pack resistance). Visible in both sessions.
+- **Every poll receives telemetry** during Charging state — no ack pairs observed.
+- **Charge counter**: Init carries over previous session value (4). Resets to 0 at Precharge, increments to 1 at Charging, then jumps non-linearly (14→32→33).
+- **NTC MAX warmed** from 23°C to 24°C between sessions (TH002 stayed at 24°C — MOSFET area warm from start).
+
 #### Multi-session capture 2026-03-28 (5x connect/disconnect, battery ~60-70% SOC)
 
 Repeated charger connect/disconnect cycles reveal handshake and SOC reset behavior.
@@ -161,7 +250,7 @@ Repeated charger connect/disconnect cycles reveal handshake and SOC reset behavi
 - **Cell voltage spread consistently 2–3 mV** — very well balanced pack. Matches multimeter measurement (3834.9–3836.1 mV, spread ~1.2 mV unloaded).
 - **NTC AVG temperature increased**: from 21°C to 22°C — battery warming up through repeated charging cycles.
 
-### 4. Idle / Ack Pattern
+### 5. Idle / Ack Pattern
 
 Between telemetry responses, the battery sends short ack pairs (Length=0, CRC=0x0000):
 
@@ -242,8 +331,8 @@ Captured 2026-03-29 with BT-E6000 in bike frame, communicating with motor (DU-E6
 | Telemetry State (offset 2) | 0x00/0x02/0x03 | 0x01 (Active) |
 | Telemetry offset 16–17 | Charge counter (0–32) | `90 01` (constant) |
 | Telemetry offset 18 | Always 0x00 | 0x01 idle, up to 0x1C under load |
-| Additional commands | — | 0x11, 0x32, 0x21 |
-| Telemetry rate | Every ~3rd poll | Every poll |
+| Startup commands | 0x30 (auth), 0x31 (specs) | 0x11, 0x32, 0x21 |
+| Telemetry rate | Every poll | Every poll |
 
 ### Startup Sequence (Motor/Display)
 
@@ -429,6 +518,9 @@ Commands that return `<cmd> 01` = "command unknown" (not listed). Timeouts also 
 
 ## Open Questions
 
+- **Cmd 0x30 authentication**: What crypto algorithm? Shared key in battery EEPROM? Can cloned batteries be detected?
+- **Cmd 0x31 specifications**: What are offsets 10–17 in the response? Max current, voltage limits, cycle count?
+- **Cmd 0x31 value 414/415 vs 421/425**: Remaining vs design capacity in Wh? How are the charger's request values derived?
 - **Cmd 0x11 payload**: What do the 9 response bytes represent? Battery model, capacity, firmware version?
 - **Cmd 0x12** (10 bytes): New command, purpose unknown
 - **Cmd 0x13** (32 bytes): Large response — calibration data? Cell configuration?
@@ -440,10 +532,16 @@ Commands that return `<cmd> 01` = "command unknown" (not listed). Timeouts also 
 - **Offset 16–17 in motor mode**: Constant `0x90 0x01` — likely the value of register 0xAA (see command scan)
 - **Poll payload bytes 1–2**: Motor sends 0x02/0x03 — assist mode? System state? Does byte 2 change with assist level (ECO/TRAIL/BOOST)?
 - **Status byte pattern**: 0x00=OK, 0x10=BMS fault, 0x12=?, 0x25=no cells — is this a bitfield or enumeration?
-- Why does the battery respond to every motor poll but only every ~3rd charger poll?
+- **Charge counter non-linear**: Jumps from 1→14→32 in ~3 polls. Not a simple per-poll increment. What triggers the jumps?
 
 
 ## Logs
+
+### 2026-04-12 — Charger dual-channel capture with disconnect/reconnect (69% SOC, ~23°C)
+
+First clean dual-channel capture with chronological ordering. Reveals Cmd 0x30 (authentication) and Cmd 0x31 (battery specs) during charger startup. Charger disconnected and reconnected mid-capture.
+
+[Full log](logs/2026-04-12_charger_dual_channel.log)
 
 ### 2026-03-28 ~09:20 UTC — Charger session with reconnect (61% SOC, ~22°C)
 
