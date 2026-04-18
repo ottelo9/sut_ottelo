@@ -1,0 +1,213 @@
+// ShimanoSniffer.tc — Dual-channel Shimano UART sniffer for ESP32
+// CH1: Battery TX pin (B-TX:) — battery responses, telemetry, auth
+// CH2: Battery RX pin (B-RX:) — charger/motor requests, polls
+//
+// Single TinyC program using two serial port handles (new API).
+// Decodes Cmd 0x10 telemetry, labels 0x30/0x31/0x21/0x11/0x32.
+// Output to Tasmota web console and optional log file.
+
+// ---- Configuration ----
+#define CH1_RX_PIN   17      // GPIO connected to Battery TX pin
+#define CH2_RX_PIN   16      // GPIO connected to Battery RX pin
+#define BAUD         9600
+#define SERIAL_CFG   3       // 8N1
+#define BUF_SIZE     256
+#define GAP_MS       4       // inter-message gap detection
+#define MAX_MSG      64
+#define MAX_PAYLOAD  32      // reject noise (max known: 22)
+#define LOG_FILE     "/shimano.log"
+#define LOG_MAX_SIZE 100000  // 0 = disabled
+
+// ---- Globals ----
+int h1 = -1;
+int h2 = -1;
+
+char msg1[MAX_MSG];
+int  msg1_len = 0;
+int  last1 = 0;
+int  cnt1 = 0;
+int  err1 = 0;
+
+char msg2[MAX_MSG];
+int  msg2_len = 0;
+int  last2 = 0;
+int  cnt2 = 0;
+int  err2 = 0;
+
+char hex_out[250];
+
+// ---- Process CH1 message (Battery TX) ----
+void processCH1() {
+    if (msg1_len < 5) {
+        if (msg1_len > 0) { err1++; }
+        msg1_len = 0;
+        return;
+    }
+    if ((msg1[0] & 0xFF) != 0x00) { err1++; msg1_len = 0; return; }
+
+    int payload_len = msg1[2] & 0xFF;
+    if (payload_len > MAX_PAYLOAD) { err1++; msg1_len = 0; return; }
+
+    cnt1++;
+    int expected = 3 + payload_len + 2;
+
+    hex_out = "B-TX:";
+    int i = 0;
+    while (i < msg1_len) {
+        sprintfAppend(hex_out, " %02X", msg1[i] & 0xFF);
+        i++;
+    }
+    if (msg1_len != expected && payload_len > 0) {
+        sprintfAppend(hex_out, " [len:%d exp:%d]", msg1_len, expected);
+    }
+
+    if (payload_len > 0) {
+        int cmd = msg1[3] & 0xFF;
+        if (cmd == 0x10 && payload_len == 22 && msg1_len >= 25) {
+            int state = msg1[5] & 0xFF;
+            int pack_v = (msg1[9] & 0xFF) | ((msg1[10] & 0xFF) << 8);
+            int cell_max = ((msg1[11] & 0xFF) | ((msg1[12] & 0xFF) << 8)) / 2;
+            int cell_min = ((msg1[13] & 0xFF) | ((msg1[14] & 0xFF) << 8)) / 2;
+            int ntc_max = msg1[15] & 0xFF;
+            int ntc_avg = msg1[16] & 0xFF;
+            int th_mos  = msg1[17] & 0xFF;
+            int soc = msg1[18] & 0xFF;
+            sprintfAppend(hex_out, " | St=%d V=%d Cmax=%d Cmin=%d T=%d/%d/%d SOC=%d%%",
+                state, pack_v, cell_max, cell_min, ntc_max, ntc_avg, th_mos, soc);
+        }
+        if (cmd == 0x30 && payload_len == 18) { sprintfAppend(hex_out, " | Auth"); }
+        if (cmd == 0x31 && payload_len == 18) { sprintfAppend(hex_out, " | Specs"); }
+        if (cmd == 0x11) { sprintfAppend(hex_out, " | DevInfo"); }
+        if (cmd == 0x21) { sprintfAppend(hex_out, " | Shutdown"); }
+        if (cmd == 0x32) { sprintfAppend(hex_out, " | Trip"); }
+    }
+
+    printString(hex_out);
+    if (LOG_MAX_SIZE > 0) {
+        hex_out += "\n";
+        fileLog(LOG_FILE, hex_out, LOG_MAX_SIZE);
+    }
+    msg1_len = 0;
+}
+
+// ---- Process CH2 message (Charger/Motor TX) ----
+void processCH2() {
+    if (msg2_len < 5) {
+        if (msg2_len > 0) { err2++; }
+        msg2_len = 0;
+        return;
+    }
+    if ((msg2[0] & 0xFF) != 0x00) { err2++; msg2_len = 0; return; }
+
+    int payload_len = msg2[2] & 0xFF;
+    if (payload_len > MAX_PAYLOAD) { err2++; msg2_len = 0; return; }
+
+    cnt2++;
+    int expected = 3 + payload_len + 2;
+
+    hex_out = "B-RX:";
+    int i = 0;
+    while (i < msg2_len) {
+        sprintfAppend(hex_out, " %02X", msg2[i] & 0xFF);
+        i++;
+    }
+    if (msg2_len != expected && payload_len > 0) {
+        sprintfAppend(hex_out, " [len:%d exp:%d]", msg2_len, expected);
+    }
+
+    if (payload_len > 0) {
+        int cmd = msg2[3] & 0xFF;
+        if (cmd == 0x10 && payload_len == 5) { sprintfAppend(hex_out, " | Poll"); }
+        if (cmd == 0x30 && payload_len == 17) { sprintfAppend(hex_out, " | Auth"); }
+        if (cmd == 0x31 && payload_len == 11) { sprintfAppend(hex_out, " | Specs"); }
+        if (cmd == 0x11 && payload_len == 1) { sprintfAppend(hex_out, " | DevInfo req"); }
+        if (cmd == 0x21 && payload_len == 1) { sprintfAppend(hex_out, " | Shutdown req"); }
+        if (cmd == 0x32) { sprintfAppend(hex_out, " | Trip"); }
+    }
+
+    printString(hex_out);
+    if (LOG_MAX_SIZE > 0) {
+        hex_out += "\n";
+        fileLog(LOG_FILE, hex_out, LOG_MAX_SIZE);
+    }
+    msg2_len = 0;
+}
+
+// ---- Callbacks ----
+
+void EveryLoop() {
+    int now = millis();
+
+    if (msg1_len > 0 && (now - last1) > GAP_MS) { processCH1(); }
+    if (msg2_len > 0 && (now - last2) > GAP_MS) { processCH2(); }
+
+    // Read CH1 (Battery TX)
+    while (serialAvailable(h1) > 0) {
+        int b = serialRead(h1);
+        if (b >= 0) {
+            last1 = millis();
+            if (msg1_len < MAX_MSG) {
+                msg1[msg1_len] = b;
+                msg1_len++;
+            } else {
+                processCH1();
+                msg1[0] = b;
+                msg1_len = 1;
+            }
+        }
+    }
+
+    // Read CH2 (Charger/Motor TX)
+    while (serialAvailable(h2) > 0) {
+        int b = serialRead(h2);
+        if (b >= 0) {
+            last2 = millis();
+            if (msg2_len < MAX_MSG) {
+                msg2[msg2_len] = b;
+                msg2_len++;
+            } else {
+                processCH2();
+                msg2[0] = b;
+                msg2_len = 1;
+            }
+        }
+    }
+}
+
+void WebCall() {
+    char buf[80];
+    sprintf(buf, "{s}B-TX (CH1){m}%d msgs / %d err{e}", cnt1, err1);
+    webSend(buf);
+    sprintf(buf, "{s}B-RX (CH2){m}%d msgs / %d err{e}", cnt2, err2);
+    webSend(buf);
+}
+
+void OnExit() {
+    if (h1 >= 0) { serialClose(h1); }
+    if (h2 >= 0) { serialClose(h2); }
+    printStr("Shimano Sniffer stopped.");
+}
+
+int main() {
+    h1 = serialBegin(CH1_RX_PIN, -1, BAUD, SERIAL_CFG, BUF_SIZE);
+    if (h1 < 0) {
+        printStr("ERROR: CH1 (B-TX) serialBegin failed!");
+        return -1;
+    }
+
+    h2 = serialBegin(CH2_RX_PIN, -1, BAUD, SERIAL_CFG, BUF_SIZE);
+    if (h2 < 0) {
+        printStr("ERROR: CH2 (B-RX) serialBegin failed!");
+        serialClose(h1);
+        return -1;
+    }
+
+    msg1_len = 0; cnt1 = 0; err1 = 0; last1 = millis();
+    msg2_len = 0; cnt2 = 0; err2 = 0; last2 = millis();
+
+    char info[80];
+    sprintf(info, "Shimano Sniffer: B-TX=GPIO%d (h%d) B-RX=GPIO%d (h%d)",
+        CH1_RX_PIN, h1, CH2_RX_PIN, h2);
+    printString(info);
+    return 0;
+}
