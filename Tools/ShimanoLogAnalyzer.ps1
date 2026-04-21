@@ -20,6 +20,138 @@ function Get-CRC16X25([byte[]]$data) {
     return $crc -bxor 0xFFFF
 }
 
+# ---------- FIELD BACKGROUND COLORS ----------
+$FIELD_COLORS = @{
+    "structural" = [System.Drawing.Color]::FromArgb(220, 220, 220)
+    "cmd"        = [System.Drawing.Color]::FromArgb(255, 215, 120)
+    "state"      = [System.Drawing.Color]::FromArgb(210, 175, 255)
+    "voltage"    = [System.Drawing.Color]::FromArgb(255, 255, 140)
+    "cellmax"    = [System.Drawing.Color]::FromArgb(170, 235, 255)
+    "cellmin"    = [System.Drawing.Color]::FromArgb(140, 195, 255)
+    "temp"       = [System.Drawing.Color]::FromArgb(255, 190, 120)
+    "soc"        = [System.Drawing.Color]::FromArgb(170, 255, 170)
+    "chgctr"     = [System.Drawing.Color]::FromArgb(255, 240, 160)
+    "crc"        = [System.Drawing.Color]::FromArgb(200, 200, 200)
+    "payload"    = [System.Drawing.Color]::FromArgb(240, 230, 200)
+}
+
+# ---------- STRUCTURED PARSE ----------
+function Parse-ShimanoMessage([string]$rawLine) {
+    # Returns @{ Fields = list of @{N;V;S;E;C}; RawBytes; PrefixLen; Error }
+    # N=Name, V=Value, S=ByteStart, E=ByteEnd, C=Color
+    $r = @{ Fields = @(); RawBytes = @(); PrefixLen = 0; Error = "" }
+
+    $t = $rawLine.Trim()
+    if (-not $t) { $r.Error = "empty"; return $r }
+
+    if ($t -match '^(R2?:|B-[TR]X:)\s*') {
+        $r.PrefixLen = $Matches[0].Length
+    } else { $r.Error = "no prefix"; return $r }
+
+    $hexPart = $t.Substring($r.PrefixLen)
+    if ($hexPart -match '^([^|]+)') { $hexPart = $Matches[1].Trim() }
+
+    $bytes = @()
+    foreach ($tok in ($hexPart -split '\s+')) {
+        if ($tok -match '^[0-9A-Fa-f]{2}$') { $bytes += [byte]([Convert]::ToByte($tok, 16)) }
+    }
+    $r.RawBytes = $bytes
+
+    if ($bytes.Count -lt 5) { $r.Error = "too short"; return $r }
+    if ($bytes[0] -ne 0x00) { $r.Error = "bad prefix"; return $r }
+
+    $header = $bytes[1]; $seq = $header -band 0x0F
+    $senderNibble = $header -band 0xF0
+    $senderName = switch ($senderNibble) {
+        0x00 { "Charger" }; 0x40 { "Charger (HS)" }; 0x80 { "Battery" }; 0xC0 { "Battery (HS)" }
+        default { "0x$("{0:X2}" -f $senderNibble)" }
+    }
+    $length = $bytes[2]
+    $total = 3 + $length + 2
+
+    # CRC
+    $crcText = "?"
+    if ($bytes.Count -ge $total) {
+        $crcLo = $bytes[$total-2]; $crcHi = $bytes[$total-1]
+        $crcRx = [uint16]($crcLo) + [uint16]($crcHi -shl 8)
+        if ($crcRx -eq 0) { $crcText = "CRC=0000 (ack)" }
+        else {
+            $crcCalc = Get-CRC16X25 $bytes[1..($total-3)]
+            $crcText = if ($crcCalc -eq $crcRx) { "OK" } else { "ERROR" }
+        }
+    }
+
+    $g = $FIELD_COLORS["structural"]
+    $fields = [System.Collections.ArrayList]::new()
+    $null = $fields.Add(@{N="Prefix"; V="0x00"; S=0; E=0; C=$g})
+    $null = $fields.Add(@{N="Header"; V="$senderName Seq=$seq"; S=1; E=1; C=$g})
+    $null = $fields.Add(@{N="Length"; V="$length"; S=2; E=2; C=$g})
+
+    if ($length -eq 0) {
+        $type = if ($senderNibble -eq 0x40 -or $senderNibble -eq 0xC0) { "Handshake" }
+                else { $cv = [uint16]($bytes[3]) + [uint16]($bytes[4] -shl 8); if ($cv -eq 0) { "Ack" } else { "Ping" } }
+        $null = $fields.Add(@{N="Type"; V=$type; S=3; E=4; C=$g})
+        $r.Fields = $fields; return $r
+    }
+
+    $cmd = $bytes[3]
+    $null = $fields.Add(@{N="Command"; V="0x$("{0:X2}" -f $cmd)"; S=3; E=3; C=$FIELD_COLORS["cmd"]})
+
+    if ($cmd -eq 0x10 -and $length -eq 22 -and $bytes.Count -ge 25) {
+        $state = $bytes[5]
+        $stName = switch ($state) { 0x00 {"Init"}; 0x01 {"Active"}; 0x02 {"Precharge"}; 0x03 {"Charging"}; default {"0x$("{0:X2}" -f $state)"} }
+        $packV = [uint16]($bytes[9]) + [uint16]($bytes[10] -shl 8)
+        $cMax = [int](([uint16]($bytes[11]) + [uint16]($bytes[12] -shl 8)) / 2)
+        $cMin = [int](([uint16]($bytes[13]) + [uint16]($bytes[14] -shl 8)) / 2)
+        $ntcM = $bytes[15]; $ntcA = $bytes[16]; $th = $bytes[17]
+        $soc = $bytes[18]; $chg = $bytes[19]
+
+        $null = $fields.Add(@{N="Fault/Unk"; V="0x$("{0:X2}" -f $bytes[4])"; S=4; E=4; C=$g})
+        $null = $fields.Add(@{N="State"; V="$stName (0x$("{0:X2}" -f $state))"; S=5; E=5; C=$FIELD_COLORS["state"]})
+        $null = $fields.Add(@{N="Unknown"; V="$("{0:X2}" -f $bytes[6]) $("{0:X2}" -f $bytes[7]) $("{0:X2}" -f $bytes[8])"; S=6; E=8; C=$g})
+        $null = $fields.Add(@{N="Pack Voltage"; V="$packV mV ($("{0:N1}" -f ($packV/1000.0))V)"; S=9; E=10; C=$FIELD_COLORS["voltage"]})
+        $null = $fields.Add(@{N="Cell Max"; V="$cMax mV"; S=11; E=12; C=$FIELD_COLORS["cellmax"]})
+        $null = $fields.Add(@{N="Cell Min"; V="$cMin mV"; S=13; E=14; C=$FIELD_COLORS["cellmin"]})
+        $null = $fields.Add(@{N="Temp Max"; V="$ntcM C"; S=15; E=15; C=$FIELD_COLORS["temp"]})
+        $null = $fields.Add(@{N="Temp Avg"; V="$ntcA C"; S=16; E=16; C=$FIELD_COLORS["temp"]})
+        $null = $fields.Add(@{N="MOSFET Temp"; V="$th C"; S=17; E=17; C=$FIELD_COLORS["temp"]})
+        $null = $fields.Add(@{N="SOC"; V="$soc %"; S=18; E=18; C=$FIELD_COLORS["soc"]})
+        $null = $fields.Add(@{N="Charge Counter"; V="$chg"; S=19; E=19; C=$FIELD_COLORS["chgctr"]})
+        $null = $fields.Add(@{N="Unknown 20-24"; V="..."; S=20; E=24; C=$g})
+    } elseif ($cmd -eq 0x10 -and $length -eq 5) {
+        $null = $fields.Add(@{N="Poll"; V="Telemetry Poll"; S=4; E=7; C=$FIELD_COLORS["payload"]})
+    } elseif ($cmd -eq 0x30) {
+        $null = $fields.Add(@{N="Auth"; V="Authentication ($length B)"; S=4; E=(3+$length-1); C=$FIELD_COLORS["payload"]})
+    } elseif ($cmd -eq 0x31) {
+        $null = $fields.Add(@{N="Specs"; V="Battery Specs ($length B)"; S=4; E=(3+$length-1); C=$FIELD_COLORS["payload"]})
+    } elseif ($cmd -eq 0x11) {
+        $null = $fields.Add(@{N="DevInfo"; V="Device Info ($length B)"; S=4; E=(3+$length-1); C=$FIELD_COLORS["payload"]})
+    } elseif ($cmd -eq 0x21) {
+        $null = $fields.Add(@{N="Shutdown"; V="Shutdown ($length B)"; S=4; E=(3+$length-1); C=$FIELD_COLORS["payload"]})
+    } elseif ($cmd -eq 0x32) {
+        $null = $fields.Add(@{N="Trip"; V="Trip/Config ($length B)"; S=4; E=(3+$length-1); C=$FIELD_COLORS["payload"]})
+    } else {
+        $null = $fields.Add(@{N="Payload"; V="Cmd 0x$("{0:X2}" -f $cmd) ($length B)"; S=4; E=(3+$length-1); C=$FIELD_COLORS["payload"]})
+    }
+
+    if ($bytes.Count -ge $total) {
+        $null = $fields.Add(@{N="CRC"; V=$crcText; S=($total-2); E=($total-1); C=$FIELD_COLORS["crc"]})
+    }
+
+    $r.Fields = $fields
+    return $r
+}
+
+# ---------- BUILD BYTE MAP ----------
+function Build-ByteMap($parsed) {
+    $map = @{}
+    if ($parsed.Error) { return $map }
+    foreach ($f in $parsed.Fields) {
+        for ($i = $f.S; $i -le $f.E; $i++) { $map[$i] = $f }
+    }
+    return $map
+}
+
 # ---------- DECODE ----------
 function Decode-ShimanoLine([string]$line) {
     $line = $line.Trim()
