@@ -233,6 +233,18 @@ function Decode-ShimanoLine([string]$line) {
         return "[$chLabel] $sender Seq=$seq | Cmd 0x21 Len=$length | $payloadHex | $crcOk"
     }
 
+    # --- Cmd 0x30: Authentication ---
+    if ($cmd -eq 0x30) {
+        $payloadHex = ($payload | ForEach-Object { "{0:X2}" -f $_ }) -join " "
+        return "[$chLabel] $sender Seq=$seq | Cmd 0x30 Auth Len=$length | $payloadHex | $crcOk"
+    }
+
+    # --- Cmd 0x31: Battery Specs ---
+    if ($cmd -eq 0x31) {
+        $payloadHex = ($payload | ForEach-Object { "{0:X2}" -f $_ }) -join " "
+        return "[$chLabel] $sender Seq=$seq | Cmd 0x31 Specs Len=$length | $payloadHex | $crcOk"
+    }
+
     # --- Cmd 0x32: Trip/Config ---
     if ($cmd -eq 0x32) {
         $payloadHex = ($payload | ForEach-Object { "{0:X2}" -f $_ }) -join " "
@@ -242,6 +254,16 @@ function Decode-ShimanoLine([string]$line) {
     # --- Unknown command ---
     $payloadHex = ($payload | ForEach-Object { "{0:X2}" -f $_ }) -join " "
     return "[$chLabel] $sender Seq=$seq | Cmd $cmdHex Len=$length | $payloadHex | $crcOk"
+}
+
+# ---------- COLOR HELPER ----------
+# Returns the display color for a log line based on channel prefix.
+# Red = Charger/Request (R2: / B-RX:), Green = Battery/Answer (R: / B-TX:)
+function Get-LineColor([string]$line) {
+    $t = $line.Trim()
+    if ($t -match '^(R2:|B-RX:)') { return [System.Drawing.Color]::FromArgb(190, 0, 0) }
+    if ($t -match '^(R:|B-TX:)')  { return [System.Drawing.Color]::FromArgb(0, 140, 0) }
+    return [System.Drawing.Color]::FromArgb(100, 100, 100)
 }
 
 # ---------- GUI ----------
@@ -267,23 +289,23 @@ $form.Controls.Add($lblOutput)
 # Monospace font for text boxes
 $monoFont = New-Object System.Drawing.Font("Consolas", 10)
 
-# Input textbox (left)
-$txtInput = New-Object System.Windows.Forms.TextBox
-$txtInput.Multiline = $true
-$txtInput.ScrollBars = "Both"
+# Input RichTextBox (left) — editable, colored after Analyze
+$txtInput = New-Object System.Windows.Forms.RichTextBox
+$txtInput.ScrollBars = [System.Windows.Forms.RichTextBoxScrollBars]::Both
 $txtInput.WordWrap = $false
 $txtInput.Font = $monoFont
 $txtInput.AcceptsReturn = $true
+$txtInput.DetectUrls = $false
 $form.Controls.Add($txtInput)
 
-# Output textbox (right)
-$txtOutput = New-Object System.Windows.Forms.TextBox
-$txtOutput.Multiline = $true
-$txtOutput.ScrollBars = "Both"
+# Output RichTextBox (right) — read-only decoded output with colors
+$txtOutput = New-Object System.Windows.Forms.RichTextBox
+$txtOutput.ScrollBars = [System.Windows.Forms.RichTextBoxScrollBars]::Both
 $txtOutput.WordWrap = $false
 $txtOutput.Font = $monoFont
 $txtOutput.ReadOnly = $true
 $txtOutput.BackColor = [System.Drawing.Color]::FromArgb(245, 245, 245)
+$txtOutput.DetectUrls = $false
 $form.Controls.Add($txtOutput)
 
 # Analyze button
@@ -316,7 +338,6 @@ $form.Add_Resize({
     $btnY = 32
     $topOffset = 60
     $bottomMargin = 10
-    $gap = 10
     $halfW = [Math]::Floor(($w - 30) / 2)
     $boxH = $h - $topOffset - $bottomMargin
 
@@ -338,28 +359,45 @@ $form.Add_Shown({ $form.GetType().GetMethod('OnResize', [System.Reflection.Bindi
 
 # Analyze click handler
 $btnAnalyze.Add_Click({
-    $lines = $txtInput.Text -split "`r?`n"
-    $results = @()
+    $lines = $txtInput.Lines
+    $txtOutput.Clear()
+
     $decoded = 0
-    foreach ($rawLine in $lines) {
+
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $rawLine = $lines[$i]
         $trimmed = $rawLine.Trim()
-        if (-not $trimmed) {
-            $results += ""
-            continue
+        $color = Get-LineColor $rawLine
+
+        # Color the input line (left side) — text unchanged
+        $charStart = $txtInput.GetFirstCharIndexFromLine($i)
+        if ($charStart -ge 0) {
+            $txtInput.Select($charStart, $rawLine.Length)
+            $txtInput.SelectionColor = $color
         }
-        $result = Decode-ShimanoLine $trimmed
-        $results += $result
+
+        # Decode for the output line (right side)
+        $result = if ($trimmed) { Decode-ShimanoLine $trimmed } else { "" }
         if ($result -and $result -ne "-- not a log line --") { $decoded++ }
+
+        # Append colored decoded line to output
+        $txtOutput.SelectionStart = $txtOutput.TextLength
+        $txtOutput.SelectionColor = $color
+        $suffix = if ($i -lt $lines.Count - 1) { "`n" } else { "" }
+        $txtOutput.AppendText($result + $suffix)
     }
-    $txtOutput.Text = $results -join "`r`n"
+
+    # Deselect input text
+    $txtInput.Select(0, 0)
+
     $lblStatus.Text = "$decoded lines decoded"
     $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(0, 120, 50)
 })
 
 # Clear click handler
 $btnClear.Add_Click({
-    $txtInput.Text = ""
-    $txtOutput.Text = ""
+    $txtInput.Clear()
+    $txtOutput.Clear()
     $lblStatus.Text = ""
 })
 
