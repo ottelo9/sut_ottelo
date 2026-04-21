@@ -75,11 +75,11 @@ void processCH1() {
             sprintfAppend(hex_out, " | St=%d V=%d Cmax=%d Cmin=%d T=%d/%d/%d SOC=%d%%",
                 state, pack_v, cell_max, cell_min, ntc_max, ntc_avg, th_mos, soc);
         }
-        if (cmd == 0x30 && payload_len == 18) { sprintfAppend(hex_out, " | Auth"); }
-        if (cmd == 0x31 && payload_len == 18) { sprintfAppend(hex_out, " | Specs"); }
-        if (cmd == 0x11) { sprintfAppend(hex_out, " | DevInfo"); }
-        if (cmd == 0x21) { sprintfAppend(hex_out, " | Shutdown"); }
-        if (cmd == 0x32) { sprintfAppend(hex_out, " | Trip"); }
+        if (cmd == 0x30 && payload_len == 18) { hex_out += " | Auth"; }
+        if (cmd == 0x31 && payload_len == 18) { hex_out += " | Specs"; }
+        if (cmd == 0x11) { hex_out += " | DevInfo"; }
+        if (cmd == 0x21) { hex_out += " | Shutdown"; }
+        if (cmd == 0x32) { hex_out += " | Trip"; }
     }
 
     printString(hex_out);
@@ -117,12 +117,12 @@ void processCH2() {
 
     if (payload_len > 0) {
         int cmd = msg2[3] & 0xFF;
-        if (cmd == 0x10 && payload_len == 5) { sprintfAppend(hex_out, " | Poll"); }
-        if (cmd == 0x30 && payload_len == 17) { sprintfAppend(hex_out, " | Auth"); }
-        if (cmd == 0x31 && payload_len == 11) { sprintfAppend(hex_out, " | Specs"); }
-        if (cmd == 0x11 && payload_len == 1) { sprintfAppend(hex_out, " | DevInfo req"); }
-        if (cmd == 0x21 && payload_len == 1) { sprintfAppend(hex_out, " | Shutdown req"); }
-        if (cmd == 0x32) { sprintfAppend(hex_out, " | Trip"); }
+        if (cmd == 0x10 && payload_len == 5) { hex_out += " | Poll"; }
+        if (cmd == 0x30 && payload_len == 17) { hex_out += " | Auth"; }
+        if (cmd == 0x31 && payload_len == 11) { hex_out += " | Specs"; }
+        if (cmd == 0x11 && payload_len == 1) { hex_out += " | DevInfo req"; }
+        if (cmd == 0x21 && payload_len == 1) { hex_out += " | Shutdown req"; }
+        if (cmd == 0x32) { hex_out += " | Trip"; }
     }
 
     printString(hex_out);
