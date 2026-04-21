@@ -36,6 +36,16 @@ char hex_out[200];
 char dec_out[100];
 char raw_log[2000];
 char dec_log[800];
+char tmp[1100];
+
+void trimLog(char log[], int maxLen, int keepFrom) {
+    if (strlen(log) <= maxLen) return;
+    int p = keepFrom;
+    while (p < maxLen && log[p] != 10) p++;
+    if (p < maxLen) p++;
+    strSub(tmp, log, p, strlen(log) - p);
+    strcpy(log, tmp);
+}
 
 void processCH1() {
     if (msg1_len < 5) {
@@ -51,7 +61,7 @@ void processCH1() {
     cnt1++;
     seq++;
 
-    sprintf(hex_out, "%d R:", seq);
+    sprintf(hex_out, "%d B-TX:", seq);
     int i = 0;
     while (i < msg1_len) {
         sprintfAppend(hex_out, " %02X", msg1[i] & 0xFF);
@@ -64,7 +74,7 @@ void processCH1() {
 
     printString(hex_out);
 
-    if (strlen(raw_log) > 1800) { raw_log = ""; }
+    trimLog(raw_log, 1700, 800);
     raw_log += hex_out;
     raw_log += "\n";
 
@@ -93,7 +103,7 @@ void processCH1() {
         if (cmd == 0x32) { sprintf(dec_out, "%d Trip", seq); }
 
         if (strlen(dec_out) > 0) {
-            if (strlen(dec_log) > 600) { dec_log = ""; }
+            trimLog(dec_log, 600, 300);
             dec_log += dec_out;
             dec_log += "\n";
         }
@@ -116,7 +126,7 @@ void processCH2() {
     cnt2++;
     seq++;
 
-    sprintf(hex_out, "%d R2:", seq);
+    sprintf(hex_out, "%d B-RX:", seq);
     int i = 0;
     while (i < msg2_len) {
         sprintfAppend(hex_out, " %02X", msg2[i] & 0xFF);
@@ -129,7 +139,7 @@ void processCH2() {
 
     printString(hex_out);
 
-    if (strlen(raw_log) > 1800) { raw_log = ""; }
+    trimLog(raw_log, 1700, 800);
     raw_log += hex_out;
     raw_log += "\n";
 
@@ -149,7 +159,7 @@ void processCH2() {
         if (cmd == 0x32) { sprintf(dec_out, "%d Trip-Req", seq); }
 
         if (strlen(dec_out) > 0) {
-            if (strlen(dec_log) > 600) { dec_log = ""; }
+            trimLog(dec_log, 600, 300);
             dec_log += dec_out;
             dec_log += "\n";
         }
@@ -199,19 +209,21 @@ void WebUI() {
     webCheckbox(opt_decode, "Decode");
     webCheckbox(opt_flog, "File Log");
 
-    char buf[80];
+    char buf[100];
     sprintf(buf, "<hr><small>TX:%d RX:%d Err:%d/%d #%d</small>", cnt1, cnt2, err1, err2, seq);
     webSend(buf);
 
-    webSend("<pre style='height:250px;overflow-y:auto;background:#000;color:#0f0;padding:4px;font-size:11px;margin:4px 0'>");
+    webSend("<div style='height:250px;overflow-y:auto;display:flex;flex-direction:column-reverse'>");
+    webSend("<pre style='margin:0;background:#000;color:#0f0;padding:4px;font-size:11px;width:100%'>");
     webSend(raw_log);
-    webSend("</pre>");
+    webSend("</pre></div>");
 
+    webSend("<div style='height:150px;overflow-y:auto;display:flex;flex-direction:column-reverse'>");
+    webSend("<pre style='margin:0;background:#000;color:#ff0;padding:4px;font-size:11px;width:100%'>");
     if (opt_decode) {
-        webSend("<pre style='height:150px;overflow-y:auto;background:#000;color:#ff0;padding:4px;font-size:11px;margin:4px 0'>");
         webSend(dec_log);
-        webSend("</pre>");
     }
+    webSend("</pre></div>");
 }
 
 void WebCall() {
