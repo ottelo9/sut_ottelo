@@ -1,5 +1,5 @@
 # ShimanoLogAnalyzer.ps1 — GUI tool for analyzing Shimano UART logs
-# Paste R:/R2: log lines, click Analyze, get decoded output side by side.
+# Paste log lines (R:/R2:/B-TX:/B-RX:, with optional seq number), click Analyze.
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -44,7 +44,7 @@ function Parse-ShimanoMessage([string]$rawLine) {
     $t = $rawLine.Trim()
     if (-not $t) { $r.Error = "empty"; return $r }
 
-    if ($t -match '^(R2?:|B-[TR]X:)\s*') {
+    if ($t -match '^(\d+\s+)?(R2?:|B-[TR]X:)\s*') {
         $r.PrefixLen = $Matches[0].Length
     } else { $r.Error = "no prefix"; return $r }
 
@@ -157,15 +157,12 @@ function Decode-ShimanoLine([string]$line) {
     $line = $line.Trim()
     if (-not $line) { return "" }
 
-    # Extract channel prefix and hex bytes
+    # Extract channel prefix and hex bytes (optional leading seq number)
     $channel = ""
     $hexPart = $line
-    if ($line -match '^(R2?:)\s*(.+)$') {
-        $channel = $Matches[1]
-        $hexPart = $Matches[2]
-    } elseif ($line -match '^(B-[TR]X:)\s*(.+)$') {
-        $channel = $Matches[1]
-        $hexPart = $Matches[2]
+    if ($line -match '^(\d+\s+)?(R2?:|B-[TR]X:)\s*(.+)$') {
+        $channel = $Matches[2]
+        $hexPart = $Matches[3]
     } else {
         return "-- not a log line --"
     }
@@ -393,8 +390,8 @@ function Decode-ShimanoLine([string]$line) {
 # Red = Charger/Request (R2: / B-RX:), Green = Battery/Answer (R: / B-TX:)
 function Get-LineColor([string]$line) {
     $t = $line.Trim()
-    if ($t -match '^(R2:|B-RX:)') { return [System.Drawing.Color]::FromArgb(190, 0, 0) }
-    if ($t -match '^(R:|B-TX:)')  { return [System.Drawing.Color]::FromArgb(0, 140, 0) }
+    if ($t -match '^(\d+\s+)?(R2:|B-RX:)') { return [System.Drawing.Color]::FromArgb(190, 0, 0) }
+    if ($t -match '^(\d+\s+)?(R:|B-TX:)')  { return [System.Drawing.Color]::FromArgb(0, 140, 0) }
     return [System.Drawing.Color]::FromArgb(100, 100, 100)
 }
 
@@ -449,7 +446,7 @@ $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 
 # Top label
 $lblInput = New-Object System.Windows.Forms.Label
-$lblInput.Text = "Paste log lines (R: / R2: / B-TX: / B-RX:):"
+$lblInput.Text = "Paste log lines (R:/R2:/B-TX:/B-RX:, optional seq number):"
 $lblInput.Location = New-Object System.Drawing.Point(10, 8)
 $lblInput.AutoSize = $true
 $form.Controls.Add($lblInput)
