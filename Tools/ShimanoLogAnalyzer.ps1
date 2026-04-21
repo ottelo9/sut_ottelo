@@ -577,6 +577,7 @@ $btnClear.Add_Click({
     $script:selLineIdx = -1
     $script:selByteMap = @{}
     $script:selParsed = $null
+    if ($popup.Visible) { $popup.Hide() }
 })
 
 # Right panel click: highlight byte groups on left
@@ -586,6 +587,74 @@ $txtOutput.Add_MouseDown({
     $ci = $txtOutput.GetCharIndexFromPosition($e.Location)
     $li = $txtOutput.GetLineFromCharIndex($ci)
     Select-Line $li
+    $popup.Hide()
+})
+
+# ---------- POPUP (fixed position field info) ----------
+$popup = New-Object System.Windows.Forms.Form
+$popup.Text = "Field Info"
+$popup.Size = New-Object System.Drawing.Size(440, 170)
+$popup.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedToolWindow
+$popup.TopMost = $true
+$popup.ShowInTaskbar = $false
+$popup.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+$popup.KeyPreview = $true
+$popup.Add_KeyDown({ param($s, $e) if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Escape) { $popup.Hide() } })
+
+$popupRtb = New-Object System.Windows.Forms.RichTextBox
+$popupRtb.Dock = "Fill"
+$popupRtb.ReadOnly = $true
+$popupRtb.BorderStyle = "None"
+$popupRtb.Font = New-Object System.Drawing.Font("Consolas", 11)
+$popupRtb.DetectUrls = $false
+$popupRtb.BackColor = [System.Drawing.Color]::FromArgb(252, 252, 245)
+$popup.Controls.Add($popupRtb)
+
+$monoBold = New-Object System.Drawing.Font("Consolas", 12, [System.Drawing.FontStyle]::Bold)
+
+function Show-FieldPopup($field, $bytes) {
+    $popupRtb.Clear()
+    $popupRtb.SelectionBackColor = $field.C
+    $popupRtb.SelectionFont = $monoBold
+    $popupRtb.AppendText(" $($field.N) `n")
+    $popupRtb.SelectionBackColor = $popupRtb.BackColor
+    $popupRtb.SelectionFont = $popupRtb.Font
+    $popupRtb.AppendText("`n")
+    $popupRtb.AppendText("Value:  $($field.V)`n")
+    $hex = ""
+    for ($i = $field.S; $i -le $field.E; $i++) {
+        if ($i -lt $bytes.Count) { $hex += "$("{0:X2}" -f $bytes[$i]) " }
+    }
+    $popupRtb.AppendText("Bytes:  [$($field.S)..$($field.E)]  $($hex.Trim())")
+
+    $loc = $form.PointToScreen([System.Drawing.Point]::new($form.ClientSize.Width - 450, 65))
+    $popup.Location = $loc
+    if (-not $popup.Visible) { $popup.Show($form) }
+    else { $popup.BringToFront() }
+}
+
+# Left panel click: show popup for clicked byte group
+$txtInput.Add_MouseDown({
+    param($s, $e)
+    if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
+    $ci = $txtInput.GetCharIndexFromPosition($e.Location)
+    $li = $txtInput.GetLineFromCharIndex($ci)
+    if ($li -ne $script:selLineIdx) {
+        Select-Line $li
+        $popup.Hide()
+        return
+    }
+    if ($script:selByteMap.Count -eq 0 -or -not $script:selParsed) { return }
+    $start = $txtInput.GetFirstCharIndexFromLine($li)
+    $inLine = $ci - $start
+    $afterPrefix = $inLine - $script:selParsed.PrefixLen
+    if ($afterPrefix -lt 0) { $popup.Hide(); return }
+    $bi = [Math]::Floor($afterPrefix / 3)
+    if ($script:selByteMap.ContainsKey($bi)) {
+        Show-FieldPopup $script:selByteMap[$bi] $script:selParsed.RawBytes
+    } else {
+        $popup.Hide()
+    }
 })
 
 # Synchronized scrolling: scroll output when input scrolls
@@ -604,3 +673,4 @@ $txtInput.Add_KeyUp({
 })
 
 [void]$form.ShowDialog()
+$popup.Dispose()
