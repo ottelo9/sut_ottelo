@@ -398,6 +398,47 @@ function Get-LineColor([string]$line) {
     return [System.Drawing.Color]::FromArgb(100, 100, 100)
 }
 
+# ---------- SELECTION STATE ----------
+$script:selLineIdx = -1
+$script:selByteMap = @{}
+$script:selParsed  = $null
+
+function Clear-ByteHighlights {
+    if ($script:selLineIdx -lt 0 -or $script:selLineIdx -ge $txtInput.Lines.Count) { return }
+    $start = $txtInput.GetFirstCharIndexFromLine($script:selLineIdx)
+    if ($start -lt 0) { return }
+    $len = $txtInput.Lines[$script:selLineIdx].Length
+    if ($len -le 0) { return }
+    $txtInput.Select($start, $len)
+    $txtInput.SelectionBackColor = $txtInput.BackColor
+}
+
+function Apply-ByteHighlights($lineIdx, $byteMap, $prefixLen) {
+    if ($lineIdx -lt 0 -or $byteMap.Count -eq 0) { return }
+    $start = $txtInput.GetFirstCharIndexFromLine($lineIdx)
+    if ($start -lt 0) { return }
+    $lineLen = $txtInput.Lines[$lineIdx].Length
+    foreach ($bi in $byteMap.Keys) {
+        $off = $prefixLen + $bi * 3
+        if (($off + 2) -gt $lineLen) { continue }
+        $txtInput.Select($start + $off, 2)
+        $txtInput.SelectionBackColor = $byteMap[$bi].C
+    }
+}
+
+function Select-Line($lineIdx) {
+    if ($lineIdx -lt 0 -or $lineIdx -ge $txtInput.Lines.Count) { return }
+    Clear-ByteHighlights
+    $raw = $txtInput.Lines[$lineIdx]
+    $parsed = Parse-ShimanoMessage $raw
+    $map = Build-ByteMap $parsed
+    $script:selLineIdx = $lineIdx
+    $script:selParsed  = $parsed
+    $script:selByteMap = $map
+    Apply-ByteHighlights $lineIdx $map $parsed.PrefixLen
+    $txtInput.Select(0, 0)
+}
+
 # ---------- GUI ----------
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Shimano UART Log Analyzer"
@@ -491,6 +532,8 @@ $form.Add_Shown({ $form.GetType().GetMethod('OnResize', [System.Reflection.Bindi
 
 # Analyze click handler
 $btnAnalyze.Add_Click({
+    Clear-ByteHighlights
+    $script:selLineIdx = -1; $script:selByteMap = @{}; $script:selParsed = $null
     $lines = $txtInput.Lines
     $txtOutput.Clear()
 
@@ -531,6 +574,18 @@ $btnClear.Add_Click({
     $txtInput.Clear()
     $txtOutput.Clear()
     $lblStatus.Text = ""
+    $script:selLineIdx = -1
+    $script:selByteMap = @{}
+    $script:selParsed = $null
+})
+
+# Right panel click: highlight byte groups on left
+$txtOutput.Add_MouseDown({
+    param($s, $e)
+    if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
+    $ci = $txtOutput.GetCharIndexFromPosition($e.Location)
+    $li = $txtOutput.GetLineFromCharIndex($ci)
+    Select-Line $li
 })
 
 # Synchronized scrolling: scroll output when input scrolls
