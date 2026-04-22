@@ -73,7 +73,7 @@ function Parse-ShimanoMessage([string]$rawLine) {
     $crcText = "?"
     if ($bytes.Count -ge $total) {
         $crcLo = $bytes[$total-2]; $crcHi = $bytes[$total-1]
-        $crcRx = [uint16]($crcLo) + [uint16]($crcHi -shl 8)
+        $crcRx = [int]$crcLo + [int]$crcHi * 256
         if ($crcRx -eq 0) { $crcText = "CRC=0000 (ack)" }
         else {
             $crcCalc = Get-CRC16X25 $bytes[1..($total-3)]
@@ -89,7 +89,7 @@ function Parse-ShimanoMessage([string]$rawLine) {
 
     if ($length -eq 0) {
         $type = if ($senderNibble -eq 0x40 -or $senderNibble -eq 0xC0) { "Handshake" }
-                else { $cv = [uint16]($bytes[3]) + [uint16]($bytes[4] -shl 8); if ($cv -eq 0) { "Ack" } else { "Ping" } }
+                else { $cv = [int]$bytes[3] + [int]$bytes[4] * 256; if ($cv -eq 0) { "Ack" } else { "Ping" } }
         $null = $fields.Add(@{N="Type"; V=$type; S=3; E=4; C=$g})
         $r.Fields = $fields; return $r
     }
@@ -100,9 +100,9 @@ function Parse-ShimanoMessage([string]$rawLine) {
     if ($cmd -eq 0x10 -and $length -eq 22 -and $bytes.Count -ge 25) {
         $state = $bytes[5]
         $stName = switch ($state) { 0x00 {"Init"}; 0x01 {"Active"}; 0x02 {"Precharge"}; 0x03 {"Charging"}; default {"0x$("{0:X2}" -f $state)"} }
-        $packV = [uint16]($bytes[9]) + [uint16]($bytes[10] -shl 8)
-        $cMax = [int](([uint16]($bytes[11]) + [uint16]($bytes[12] -shl 8)) / 2)
-        $cMin = [int](([uint16]($bytes[13]) + [uint16]($bytes[14] -shl 8)) / 2)
+        $packV = [int]$bytes[9] + [int]$bytes[10] * 256
+        $vMax = [int](([int]$bytes[11] + [int]$bytes[12] * 256) / 2)
+        $vMin = [int](([int]$bytes[13] + [int]$bytes[14] * 256) / 2)
         $ntcM = $bytes[15]; $ntcA = $bytes[16]; $th = $bytes[17]
         $soc = $bytes[18]; $chg = $bytes[19]
 
@@ -110,8 +110,8 @@ function Parse-ShimanoMessage([string]$rawLine) {
         $null = $fields.Add(@{N="State"; V="$stName (0x$("{0:X2}" -f $state))"; S=5; E=5; C=$FIELD_COLORS["state"]})
         $null = $fields.Add(@{N="Unknown"; V="$("{0:X2}" -f $bytes[6]) $("{0:X2}" -f $bytes[7]) $("{0:X2}" -f $bytes[8])"; S=6; E=8; C=$g})
         $null = $fields.Add(@{N="Pack Voltage"; V="$packV mV ($("{0:N1}" -f ($packV/1000.0))V)"; S=9; E=10; C=$FIELD_COLORS["voltage"]})
-        $null = $fields.Add(@{N="Cell Max"; V="$cMax mV"; S=11; E=12; C=$FIELD_COLORS["cellmax"]})
-        $null = $fields.Add(@{N="Cell Min"; V="$cMin mV"; S=13; E=14; C=$FIELD_COLORS["cellmin"]})
+        $null = $fields.Add(@{N="Vmax"; V="$vMax mV"; S=11; E=12; C=$FIELD_COLORS["cellmax"]})
+        $null = $fields.Add(@{N="Vmin"; V="$vMin mV"; S=13; E=14; C=$FIELD_COLORS["cellmin"]})
         $null = $fields.Add(@{N="Temp Max"; V="$ntcM C"; S=15; E=15; C=$FIELD_COLORS["temp"]})
         $null = $fields.Add(@{N="Temp Avg"; V="$ntcA C"; S=16; E=16; C=$FIELD_COLORS["temp"]})
         $null = $fields.Add(@{N="MOSFET Temp"; V="$th C"; S=17; E=17; C=$FIELD_COLORS["temp"]})
@@ -217,8 +217,8 @@ function Decode-ShimanoLine([string]$line) {
     if ($bytes.Count -ge $expectedTotal) {
         $crcLo = $bytes[$expectedTotal - 2]
         $crcHi = $bytes[$expectedTotal - 1]
-        $crcReceived = [uint16]($crcLo) + [uint16]($crcHi -shl 8)
-        if ($crcReceived -eq 0x0000) {
+        $crcReceived = [int]$crcLo + [int]$crcHi * 256
+        if ($crcReceived -eq 0) {
             $crcOk = "CRC=0000 (ack)"
         } else {
             $crcData = $bytes[1..($expectedTotal - 3)]
@@ -241,7 +241,7 @@ function Decode-ShimanoLine([string]$line) {
         } else {
             # Check CRC
             $crcLo = $bytes[3]; $crcHi = $bytes[4]
-            $crcVal = [uint16]($crcLo) + [uint16]($crcHi -shl 8)
+            $crcVal = [int]$crcLo + [int]$crcHi * 256
             if ($crcVal -eq 0x0000) {
                 $type = "Ack (CRC=0000)"
             } else {
@@ -285,10 +285,9 @@ function Decode-ShimanoLine([string]$line) {
             $unk4      = $payload[4]
             $unk5      = $payload[5]
 
-            $packV     = [uint16]($payload[6]) + [uint16]($payload[7] -shl 8)
-            $cellMax   = ([uint16]($payload[8]) + [uint16]($payload[9] -shl 8)) / 2.0
-            $cellMin   = ([uint16]($payload[10]) + [uint16]($payload[11] -shl 8)) / 2.0
-            $cellSpread = $cellMax - $cellMin
+            $packV     = [int]$payload[6] + [int]$payload[7] * 256
+            $vMax      = [int](([int]$payload[8] + [int]$payload[9] * 256) / 2)
+            $vMin      = [int](([int]$payload[10] + [int]$payload[11] * 256) / 2)
             $ntcMax    = $payload[12]
             $ntcAvg    = $payload[13]
             $th002     = $payload[14]
@@ -297,7 +296,6 @@ function Decode-ShimanoLine([string]$line) {
             $off17     = $payload[17]
             $off18     = $payload[18]
 
-            # State name
             switch ($state) {
                 0x00 { $stName = "Init" }
                 0x01 { $stName = "Active (Motor)" }
@@ -306,19 +304,17 @@ function Decode-ShimanoLine([string]$line) {
                 default { $stName = "0x$("{0:X2}" -f $state)" }
             }
 
-            # Fault flag
             $faultInfo = ""
             if ($unknown1 -ne 0x00) {
                 $faultInfo = " FAULT=0x$("{0:X2}" -f $unknown1)"
             }
-            # Unknown bytes 3-5
             $unkInfo = ""
             if ($unk3 -ne 0 -or $unk4 -ne 0 -or $unk5 -ne 0) {
                 $unkInfo = " Unk3-5=$("{0:X2}" -f $unk3)/$("{0:X2}" -f $unk4)/$("{0:X2}" -f $unk5)"
             }
 
             $voltStr = "$packV mV ($("{0:N1}" -f ($packV / 1000.0))V)"
-            $cellStr = "Cmax=$([int]$cellMax) Cmin=$([int]$cellMin) D=$([int]$cellSpread)mV"
+            $cellStr = "Vmax=$vMax Vmin=$vMin"
             $tempStr = "T=$ntcMax/$ntcAvg/${th002}C"
 
             $extra = ""
