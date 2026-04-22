@@ -202,10 +202,10 @@ function Decode-ShimanoLine([string]$line) {
     $seq = ($header -band 0x0F)
 
     switch ($senderNibble) {
-        0x00 { $sender = "Charger" }
-        0x40 { $sender = "Charger (Handshake)" }
-        0x80 { $sender = "Battery" }
-        0xC0 { $sender = "Battery (Handshake)" }
+        0x00 { $sender = "Chg" }
+        0x40 { $sender = "Chg(HS)" }
+        0x80 { $sender = "Bat" }
+        0xC0 { $sender = "Bat(HS)" }
         default { $sender = "0x$("{0:X2}" -f $senderNibble)" }
     }
 
@@ -248,7 +248,7 @@ function Decode-ShimanoLine([string]$line) {
                 $type = "Ping"
             }
         }
-        return "[$chLabel] $sender Seq=$seq | $type | $crcOk"
+        return "[$chLabel] ${sender}Seq=$seq | $type | $crcOk"
     }
 
     # Payload present
@@ -274,7 +274,7 @@ function Decode-ShimanoLine([string]$line) {
             } else {
                 $pollInfo = "Poll (p1=0x$("{0:X2}" -f $pollByte1) p2=0x$("{0:X2}" -f $pollByte2))"
             }
-            return "[$chLabel] $sender Seq=$seq | Cmd 0x10 $pollInfo | $crcOk"
+            return "[$chLabel] ${sender}Seq=$seq | $pollInfo | $crcOk"
         }
 
         # Telemetry response (Length=22)
@@ -298,9 +298,9 @@ function Decode-ShimanoLine([string]$line) {
 
             switch ($state) {
                 0x00 { $stName = "Init" }
-                0x01 { $stName = "Active (Motor)" }
+                0x01 { $stName = "Active" }
                 0x02 { $stName = "Precharge" }
-                0x03 { $stName = "Charging" }
+                0x03 { $stName = "Charge" }
                 default { $stName = "0x$("{0:X2}" -f $state)" }
             }
 
@@ -322,63 +322,63 @@ function Decode-ShimanoLine([string]$line) {
                 $extra = " | Off17=0x$("{0:X2}" -f $off17) Off18=0x$("{0:X2}" -f $off18)"
             }
 
-            $result = "[$chLabel] $sender Seq=$seq | Telemetry State=$stName$faultInfo$unkInfo | $voltStr | $cellStr | $tempStr | SOC=${soc}% | ChgCtr=$chargeCtr$extra | $crcOk"
+            $result = "[$chLabel] ${sender}Seq=$seq | State=$stName$faultInfo$unkInfo | $voltStr | $cellStr | $tempStr | SOC=${soc}% | ChgCtr=$chargeCtr$extra | $crcOk"
             return $result
         }
 
         # Other Length for Cmd 0x10
         $payloadHex = ($payload | ForEach-Object { "{0:X2}" -f $_ }) -join " "
-        return "[$chLabel] $sender Seq=$seq | Cmd 0x10 Len=$length | $payloadHex | $crcOk"
+        return "[$chLabel] ${sender}Seq=$seq | Cmd 0x10 Len=$length | $payloadHex | $crcOk"
     }
 
     # --- Cmd 0x11: Device Info ---
     if ($cmd -eq 0x11) {
         if ($length -eq 1) {
-            return "[$chLabel] $sender Seq=$seq | Cmd 0x11 Device Info Request | $crcOk"
+            return "[$chLabel] ${sender}Seq=$seq | DevInfo Req | $crcOk"
         }
         if ($length -eq 9 -and $payload.Count -ge 9) {
             $payloadHex = ($payload | ForEach-Object { "{0:X2}" -f $_ }) -join " "
             $val1 = $payload[2]
             $fw1 = $payload[4]; $fw2 = $payload[5]
-            return "[$chLabel] $sender Seq=$seq | Cmd 0x11 Device Info Response | Byte2=0x$("{0:X2}" -f $val1) FW?=0x$("{0:X2}" -f $fw1)$("{0:X2}" -f $fw2) | $payloadHex | $crcOk"
+            return "[$chLabel] ${sender}Seq=$seq | DevInfo Resp | Byte2=0x$("{0:X2}" -f $val1) FW?=0x$("{0:X2}" -f $fw1)$("{0:X2}" -f $fw2) | $payloadHex | $crcOk"
         }
         $payloadHex = ($payload | ForEach-Object { "{0:X2}" -f $_ }) -join " "
-        return "[$chLabel] $sender Seq=$seq | Cmd 0x11 Len=$length | $payloadHex | $crcOk"
+        return "[$chLabel] ${sender}Seq=$seq | DevInfo Len=$length | $payloadHex | $crcOk"
     }
 
     # --- Cmd 0x21: Shutdown ---
     if ($cmd -eq 0x21) {
         if ($length -eq 1) {
-            return "[$chLabel] $sender Seq=$seq | Cmd 0x21 Shutdown Request | $crcOk"
+            return "[$chLabel] ${sender}Seq=$seq | Shutdown Req | $crcOk"
         }
         if ($length -eq 3) {
-            return "[$chLabel] $sender Seq=$seq | Cmd 0x21 Shutdown Ack | $crcOk"
+            return "[$chLabel] ${sender}Seq=$seq | Shutdown Ack | $crcOk"
         }
         $payloadHex = ($payload | ForEach-Object { "{0:X2}" -f $_ }) -join " "
-        return "[$chLabel] $sender Seq=$seq | Cmd 0x21 Len=$length | $payloadHex | $crcOk"
+        return "[$chLabel] ${sender}Seq=$seq | Shutdown Len=$length | $payloadHex | $crcOk"
     }
 
     # --- Cmd 0x30: Authentication ---
     if ($cmd -eq 0x30) {
         $payloadHex = ($payload | ForEach-Object { "{0:X2}" -f $_ }) -join " "
-        return "[$chLabel] $sender Seq=$seq | Cmd 0x30 Auth Len=$length | $payloadHex | $crcOk"
+        return "[$chLabel] ${sender}Seq=$seq | Auth Len=$length | $payloadHex | $crcOk"
     }
 
     # --- Cmd 0x31: Battery Specs ---
     if ($cmd -eq 0x31) {
         $payloadHex = ($payload | ForEach-Object { "{0:X2}" -f $_ }) -join " "
-        return "[$chLabel] $sender Seq=$seq | Cmd 0x31 Specs Len=$length | $payloadHex | $crcOk"
+        return "[$chLabel] ${sender}Seq=$seq | Specs Len=$length | $payloadHex | $crcOk"
     }
 
     # --- Cmd 0x32: Trip/Config ---
     if ($cmd -eq 0x32) {
         $payloadHex = ($payload | ForEach-Object { "{0:X2}" -f $_ }) -join " "
-        return "[$chLabel] $sender Seq=$seq | Cmd 0x32 Trip/Config Len=$length | $payloadHex | $crcOk"
+        return "[$chLabel] ${sender}Seq=$seq | Trip Len=$length | $payloadHex | $crcOk"
     }
 
     # --- Unknown command ---
     $payloadHex = ($payload | ForEach-Object { "{0:X2}" -f $_ }) -join " "
-    return "[$chLabel] $sender Seq=$seq | Cmd $cmdHex Len=$length | $payloadHex | $crcOk"
+    return "[$chLabel] ${sender}Seq=$seq | Cmd $cmdHex Len=$length | $payloadHex | $crcOk"
 }
 
 # ---------- COLOR HELPER ----------
@@ -626,7 +626,7 @@ function Show-FieldPopup($field, $bytes) {
     else { $popup.BringToFront() }
 }
 
-# Left panel click: show popup for clicked byte group
+# Left panel click: select line + show popup for clicked byte group
 $txtInput.Add_MouseDown({
     param($s, $e)
     if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
@@ -634,10 +634,8 @@ $txtInput.Add_MouseDown({
     $li = $txtInput.GetLineFromCharIndex($ci)
     if ($li -ne $script:selLineIdx) {
         Select-Line $li
-        $popup.Hide()
-        return
     }
-    if ($script:selByteMap.Count -eq 0 -or -not $script:selParsed) { return }
+    if ($script:selByteMap.Count -eq 0 -or -not $script:selParsed) { $popup.Hide(); return }
     $start = $txtInput.GetFirstCharIndexFromLine($li)
     $inLine = $ci - $start
     $afterPrefix = $inLine - $script:selParsed.PrefixLen
