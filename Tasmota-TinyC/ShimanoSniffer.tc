@@ -193,14 +193,22 @@ void EveryLoop() {
     if (!opt_running) return;
     int now = millis();
 
-    int r1 = msg1_len > 0 && (now - last1) > GAP_MS;
-    int r2 = msg2_len > 0 && (now - last2) > GAP_MS;
-    if (r1 && r2) {
-        if (last1 <= last2) { processCH1(); processCH2(); }
-        else { processCH2(); processCH1(); }
-    } else {
-        if (r1) processCH1();
-        if (r2) processCH2();
+    if (msg2_len > 0 && (now - last2) > GAP_MS) { processCH2(); }
+    if (msg1_len > 0 && (now - last1) > GAP_MS) { processCH1(); }
+
+    while (serialAvailable(h2) > 0) {
+        int b = serialRead(h2);
+        if (b >= 0) {
+            last2 = millis();
+            if (msg2_len < MAX_MSG) {
+                msg2[msg2_len] = b;
+                msg2_len++;
+            } else {
+                processCH2();
+                msg2[0] = b;
+                msg2_len = 1;
+            }
+        }
     }
 
     while (serialAvailable(h1) > 0) {
@@ -214,21 +222,6 @@ void EveryLoop() {
                 processCH1();
                 msg1[0] = b;
                 msg1_len = 1;
-            }
-        }
-    }
-
-    while (serialAvailable(h2) > 0) {
-        int b = serialRead(h2);
-        if (b >= 0) {
-            last2 = millis();
-            if (msg2_len < MAX_MSG) {
-                msg2[msg2_len] = b;
-                msg2_len++;
-            } else {
-                processCH2();
-                msg2[0] = b;
-                msg2_len = 1;
             }
         }
     }
