@@ -193,8 +193,15 @@ void EveryLoop() {
     if (!opt_running) return;
     int now = millis();
 
-    if (msg1_len > 0 && (now - last1) > GAP_MS) { processCH1(); }
-    if (msg2_len > 0 && (now - last2) > GAP_MS) { processCH2(); }
+    int r1 = msg1_len > 0 && (now - last1) > GAP_MS;
+    int r2 = msg2_len > 0 && (now - last2) > GAP_MS;
+    if (r1 && r2) {
+        if (last1 <= last2) { processCH1(); processCH2(); }
+        else { processCH2(); processCH1(); }
+    } else {
+        if (r1) processCH1();
+        if (r2) processCH2();
+    }
 
     while (serialAvailable(h1) > 0) {
         int b = serialRead(h1);
