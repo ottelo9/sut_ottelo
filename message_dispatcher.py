@@ -5,6 +5,8 @@ from uart_interface import UARTInterface
 from enum import Flag, auto
 from datetime import datetime
 
+MAX_PAYLOAD_LENGTH = 32  # max known Shimano payload: 22 bytes (Cmd 0x10 telemetry)
+
 class MessageDirection(Flag):
     RX = auto()    # subscriber wants incoming messages
     TX = auto()    # subscriber wants outgoing messages
@@ -12,11 +14,13 @@ class MessageDirection(Flag):
 
 # --- Event-driven Dispatcher ---
 class MessageDispatcher:
-    def __init__(self, uart: UARTInterface) -> None:
+    def __init__(self, uart: UARTInterface, rx_queue=None) -> None:
         """
         uart: any object implementing UARTInterface (e.g., pyserial.Serial or a mock)
+        rx_queue: optional queue.Queue for deferred RX dispatch (enables ordered multi-channel output)
         """
         self.uart: UARTInterface = uart
+        self.rx_queue = rx_queue
         # Maps command byte or '*' → list of callbacks
         self.subscribers: Dict[Union[int, str], List[tuple[Callable[[Msg, "MessageDispatcher", MessageDirection], None], MessageDirection]]] = defaultdict(list)
         # Maps command byte → Msg subclass
@@ -81,8 +85,9 @@ class MessageDispatcher:
         # Handle incoming messages
         self._read_and_dispatch()
 
-        # Handle outgoing messages
-        self._flush_send_queue()
+        # Handle outgoing messages (skip in deferred mode — use flush_tx() from main thread)
+        if self.rx_queue is None:
+            self._flush_send_queue()
 
     # ----------------------------
     def _broadcast(
@@ -114,6 +119,11 @@ class MessageDispatcher:
         for cb, dir_flag in self.subscribers.get('*', []):
             if direction in dir_flag:
                 cb(msg_obj, self, direction)
+
+    # ----------------------------
+    def flush_tx(self) -> None:
+        """Flush the TX queue. Use from main thread when rx_queue is set."""
+        self._flush_send_queue()
 
     # ----------------------------
     def _flush_send_queue(self) -> None:
@@ -148,9 +158,13 @@ class MessageDispatcher:
                 # discard until next possible prefix
                 self.rx_buffer.pop(0)
                 continue
+            # Reject unreasonable payload lengths (bit-bang noise protection)
+            if self.rx_buffer[2] > MAX_PAYLOAD_LENGTH:
+                self.rx_buffer.pop(0)
+                continue
 
             handled: bool = False
-            error: bool = True
+            error: bool = False
             # Try all registered Msg classes to unpack
             for msg_cls in self.message_map.values():
                 msg_obj, status = msg_cls.unpack(self.rx_buffer)
@@ -160,7 +174,10 @@ class MessageDispatcher:
                     total_len: int = len(msg_obj.data)
                     self.rx_buffer = self.rx_buffer[total_len:]
 
-                    self._broadcast(msg_obj, MessageDirection.RX)
+                    if self.rx_queue is not None:
+                        self.rx_queue.put((msg_obj, self))
+                    else:
+                        self._broadcast(msg_obj, MessageDirection.RX)
 
                     handled = True
                     break  # message processed

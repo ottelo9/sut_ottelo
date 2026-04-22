@@ -8,8 +8,10 @@ UART / Pipe Test Harness
 - Battery simulator mode: impersonates a BT-E6000 on the bus.
 """
 
+import queue as queue_module
 import select
 import sys
+import threading
 import time
 from collections import deque
 from datetime import datetime, timedelta
@@ -285,7 +287,6 @@ def main():
         print(f"{RED}Serial problem{RESET}")
         sys.exit(1)
 
-
     dispatcher = MessageDispatcher(serial_uart)
     dispatcher.register_message_type(None, Msg)
     dispatcher.subscribe(None, print_handler, direction=MessageDirection.BOTH)
@@ -312,6 +313,27 @@ def main():
         simulator = BatterySimulator(dispatcher, print_fn=print_message)
         simulator.start()
 
+    # Threaded readers for dual-channel ordered output
+    rx_queue = None
+    stop_event = None
+    if ch2_dispatcher:
+        rx_queue = queue_module.Queue()
+        dispatcher.rx_queue = rx_queue
+        ch2_dispatcher.rx_queue = rx_queue
+        stop_event = threading.Event()
+
+        def _reader_loop(disp, stop):
+            while not stop.is_set():
+                try:
+                    disp.poll()
+                except Exception as e:
+                    print_message(f"{RED}Reader error: {e}{RESET}")
+                time.sleep(0.001)
+
+        threading.Thread(target=_reader_loop, args=(dispatcher, stop_event), daemon=True).start()
+        threading.Thread(target=_reader_loop, args=(ch2_dispatcher, stop_event), daemon=True).start()
+        print(f"{GREEN}Dual-channel: chronological ordering enabled{RESET}")
+
     # Open pipe
     try:
         pipe_uart = PipeUART(PIPE)
@@ -327,9 +349,23 @@ def main():
     try:
         print_prompt()
         while True:
-            dispatcher.poll()
-            if ch2_dispatcher:
-                ch2_dispatcher.poll()
+            if rx_queue is not None:
+                # Dual-channel: drain queue, sort by timestamp, broadcast
+                batch = []
+                while True:
+                    try:
+                        batch.append(rx_queue.get_nowait())
+                    except queue_module.Empty:
+                        break
+                if batch:
+                    batch.sort(key=lambda x: x[0].receieved_at)
+                    for msg, disp in batch:
+                        disp._broadcast(msg, MessageDirection.RX)
+                dispatcher.flush_tx()
+            else:
+                # Single-channel / simulator: original behavior
+                dispatcher.poll()
+
             pipe_dispatcher.poll()
             clean_tx_queue()
 
@@ -342,6 +378,8 @@ def main():
     except KeyboardInterrupt:
         print("\nExiting…")
     finally:
+        if stop_event:
+            stop_event.set()
         pipe_uart.close()
         serial_uart.close()
         if ch2_uart:
