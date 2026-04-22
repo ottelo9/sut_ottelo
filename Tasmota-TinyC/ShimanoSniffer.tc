@@ -1,8 +1,8 @@
 // ShimanoSniffer.tc — Dual-channel Shimano UART sniffer for ESP32
 // Web UI with live log, optional decode + file logging.
 
-#define CH1_RX_PIN   17
-#define CH2_RX_PIN   16
+#define CH1_RX_PIN   17 //B-TX Pin
+#define CH2_RX_PIN   16 //B-RX Pin
 #define BAUD         9600
 #define SERIAL_CFG   3
 #define BUF_SIZE     256
@@ -37,6 +37,7 @@ char dec_out[100];
 char raw_log[2000];
 char dec_log[800];
 char tmp[1100];
+char ver[]="V0.1";
 
 void trimLog(char log[], int maxLen, int keepFrom) {
     if (strlen(log) <= maxLen) return;
@@ -72,7 +73,7 @@ void processCH1() {
         sprintfAppend(hex_out, " [%d/%d]", msg1_len, expected);
     }
 
-    printString(hex_out);
+    addLog(hex_out);
 
     trimLog(raw_log, 1700, 800);
     raw_log += hex_out;
@@ -137,7 +138,7 @@ void processCH2() {
         sprintfAppend(hex_out, " [%d/%d]", msg2_len, expected);
     }
 
-    printString(hex_out);
+    addLog(hex_out);
 
     trimLog(raw_log, 1700, 800);
     raw_log += hex_out;
@@ -228,26 +229,26 @@ void WebUI() {
 
 void WebCall() {
     char buf[64];
-    sprintf(buf, "{s}Shimano{m}TX:%d RX:%d E:%d/%d{e}", cnt1, cnt2, err1, err2);
+    sprintf(buf, "{s}Shimano %s{m}TX:%d RX:%d E:%d/%d{e}", ver, cnt1, cnt2, err1, err2);
     webSend(buf);
 }
 
 void OnExit() {
     if (h1 >= 0) { serialClose(h1); }
     if (h2 >= 0) { serialClose(h2); }
-    printStr("Shimano Sniffer stopped.");
+    addLog("Shimano Sniffer stopped.");
 }
 
 int main() {
     h1 = serialBegin(CH1_RX_PIN, -1, BAUD, SERIAL_CFG, BUF_SIZE);
     if (h1 < 0) {
-        printStr("ERROR: CH1 serialBegin failed!");
+        addLog("ERROR: CH1 serialBegin failed!");
         return -1;
     }
 
     h2 = serialBegin(CH2_RX_PIN, -1, BAUD, SERIAL_CFG, BUF_SIZE);
     if (h2 < 0) {
-        printStr("ERROR: CH2 serialBegin failed!");
+        addLog("ERROR: CH2 serialBegin failed!");
         serialClose(h1);
         return -1;
     }
@@ -261,7 +262,7 @@ int main() {
     webPageLabel(0, "Sniffer");
 
     char info[80];
-    sprintf(info, "Shimano Sniffer: TX=GPIO%d RX=GPIO%d", CH1_RX_PIN, CH2_RX_PIN);
-    printString(info);
+    sprintf(info, "Shimano Sniffer %s: TX=GPIO%d RX=GPIO%d", ver, CH1_RX_PIN, CH2_RX_PIN);
+    addLog(info);
     return 0;
 }
