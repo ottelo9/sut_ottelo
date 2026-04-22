@@ -5,9 +5,9 @@
 // the charger-battery bus. serialBegin with TX=-1 configures RX-only.
 // If ESP32 internal pull-ups still interfere, external buffering is needed.
 
-#define CH1_RX_PIN   17 // B-TX Pin (Battery TX — sniff battery responses)
+#define CH1_RX_PIN   19 // B-TX Pin (Battery TX — sniff battery responses)
 #define CH1_TX_PIN   -1 // B-TX TX (future: simulator mode)
-#define CH2_RX_PIN   16 // B-RX Pin (Battery RX — sniff charger requests)
+#define CH2_RX_PIN   18 // B-RX Pin (Battery RX — sniff charger requests)
 #define CH2_TX_PIN   -1 // B-RX TX (future: simulator mode)
 #define BAUD         9600
 #define SERIAL_CFG   3
