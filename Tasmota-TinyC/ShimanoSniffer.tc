@@ -1,8 +1,14 @@
 // ShimanoSniffer.tc — Dual-channel Shimano UART sniffer for ESP32
 // Web UI with live log, optional decode + file logging.
 
-#define CH1_RX_PIN   17 //B-TX Pin
-#define CH2_RX_PIN   16 //B-RX Pin
+// NOTE: RX pins must be high-impedance (tri-state) to avoid affecting
+// the charger-battery bus. serialBegin with TX=-1 configures RX-only.
+// If ESP32 internal pull-ups still interfere, external buffering is needed.
+
+#define CH1_RX_PIN   17 // B-TX Pin (Battery TX — sniff battery responses)
+#define CH1_TX_PIN   -1 // B-TX TX (future: simulator mode)
+#define CH2_RX_PIN   16 // B-RX Pin (Battery RX — sniff charger requests)
+#define CH2_TX_PIN   -1 // B-RX TX (future: simulator mode)
 #define BAUD         9600
 #define SERIAL_CFG   3
 #define BUF_SIZE     256
@@ -31,13 +37,15 @@ int err2 = 0;
 
 int opt_decode = 0;
 int opt_flog = 0;
+int opt_running = 1;
 
 char hex_out[200];
 char dec_out[100];
+char stn[8];
 char raw_log[2000];
 char dec_log[800];
 char tmp[1100];
-char ver[]="V0.1";
+char ver[]="V0.2";
 
 void trimLog(char log[], int maxLen, int keepFrom) {
     if (strlen(log) <= maxLen) return;
@@ -84,7 +92,7 @@ void processCH1() {
         fileLog(LOG_FILE, hex_out, LOG_MAX_SIZE);
     }
 
-    if (opt_decode && payload_len > 0) {
+    if (payload_len > 0) {
         int cmd = msg1[3] & 0xFF;
         dec_out = "";
         if (cmd == 0x10 && payload_len == 22 && msg1_len >= 25) {
@@ -93,9 +101,21 @@ void processCH1() {
             int cx = ((msg1[11] & 0xFF) | ((msg1[12] & 0xFF) << 8)) / 2;
             int cn = ((msg1[13] & 0xFF) | ((msg1[14] & 0xFF) << 8)) / 2;
             int tm = msg1[15] & 0xFF;
+            int ta = msg1[16] & 0xFF;
+            int tt = msg1[17] & 0xFF;
             int sc = msg1[18] & 0xFF;
-            sprintf(dec_out, "%d St=%d V=%d Cx=%d Cn=%d T=%d S=%d",
-                seq, st, pv, cx, cn, tm, sc);
+            if (st == 0) strcpy(stn, "Init");
+            else if (st == 1) strcpy(stn, "Act");
+            else if (st == 2) strcpy(stn, "Pre");
+            else if (st == 3) strcpy(stn, "Chg");
+            else sprintf(stn, "x%02X", st);
+            sprintf(dec_out, "%d %s[%d]", seq, stn, st);
+            sprintfAppend(dec_out, " Vbat=%d.%03dV", pv/1000, pv%1000);
+            sprintfAppend(dec_out, " Vmax=%d.%03dV", cx/1000, cx%1000);
+            sprintfAppend(dec_out, " Vmin=%d.%03dV", cn/1000, cn%1000);
+            sprintfAppend(dec_out, " T=%d/%d/%d", tm, ta, tt);
+            sprintfAppend(dec_out, " SOC=%d", sc);
+            dec_out += "%";
         }
         if (cmd == 0x30) { sprintf(dec_out, "%d Auth", seq); }
         if (cmd == 0x31) { sprintf(dec_out, "%d Specs", seq); }
@@ -149,7 +169,7 @@ void processCH2() {
         fileLog(LOG_FILE, hex_out, LOG_MAX_SIZE);
     }
 
-    if (opt_decode && payload_len > 0) {
+    if (payload_len > 0) {
         int cmd = msg2[3] & 0xFF;
         dec_out = "";
         if (cmd == 0x10 && payload_len == 5) { sprintf(dec_out, "%d Poll", seq); }
@@ -170,6 +190,7 @@ void processCH2() {
 }
 
 void EveryLoop() {
+    if (!opt_running) return;
     int now = millis();
 
     if (msg1_len > 0 && (now - last1) > GAP_MS) { processCH1(); }
@@ -207,6 +228,7 @@ void EveryLoop() {
 }
 
 void WebUI() {
+    webCheckbox(opt_running, "Sniff");
     webCheckbox(opt_decode, "Decode");
     webCheckbox(opt_flog, "File Log");
 
@@ -214,12 +236,12 @@ void WebUI() {
     sprintf(buf, "<hr><small>TX:%d RX:%d Err:%d/%d #%d</small>", cnt1, cnt2, err1, err2, seq);
     webSend(buf);
 
-    webSend("<div style='height:250px;overflow-y:auto;display:flex;flex-direction:column-reverse'>");
+    webSend("<div style='height:350px;overflow-y:scroll;display:flex;flex-direction:column-reverse'>");
     webSend("<pre style='margin:0;background:#000;color:#0f0;padding:4px;font-size:11px;width:100%'>");
     webSend(raw_log);
     webSend("</pre></div>");
 
-    webSend("<div style='height:150px;overflow-y:auto;display:flex;flex-direction:column-reverse'>");
+    webSend("<div style='height:120px;overflow-y:scroll;display:flex;flex-direction:column-reverse'>");
     webSend("<pre style='margin:0;background:#000;color:#ff0;padding:4px;font-size:11px;width:100%'>");
     if (opt_decode) {
         webSend(dec_log);
@@ -240,13 +262,13 @@ void OnExit() {
 }
 
 int main() {
-    h1 = serialBegin(CH1_RX_PIN, -1, BAUD, SERIAL_CFG, BUF_SIZE);
+    h1 = serialBegin(CH1_RX_PIN, CH1_TX_PIN, BAUD, SERIAL_CFG, BUF_SIZE);
     if (h1 < 0) {
         addLog("ERROR: CH1 serialBegin failed!");
         return -1;
     }
 
-    h2 = serialBegin(CH2_RX_PIN, -1, BAUD, SERIAL_CFG, BUF_SIZE);
+    h2 = serialBegin(CH2_RX_PIN, CH2_TX_PIN, BAUD, SERIAL_CFG, BUF_SIZE);
     if (h2 < 0) {
         addLog("ERROR: CH2 serialBegin failed!");
         serialClose(h1);
