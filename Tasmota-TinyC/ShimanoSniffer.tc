@@ -44,16 +44,22 @@ char dec_out[100];
 char stn[8];
 char raw_log[2000];
 char dec_log[800];
-char tmp[1100];
-char ver[]="V0.2";
+char tmp[2000];
+char ver[]="V0.3";
 
-void trimLog(char log[], int maxLen, int keepFrom) {
-    if (strlen(log) <= maxLen) return;
-    int p = keepFrom;
-    while (p < maxLen && log[p] != 10) p++;
-    if (p < maxLen) p++;
-    strSub(tmp, log, p, strlen(log) - p);
-    strcpy(log, tmp);
+int raw_lines = 0;
+int dec_lines = 0;
+#define RAW_MAX_LINES 24
+#define DEC_MAX_LINES 12
+
+void trimFirst(char log[]) {
+    int p = 0;
+    while (log[p] && log[p] != 10) p++;
+    if (log[p] == 10) p++;
+    if (p > 0) {
+        strSub(tmp, log, p, strlen(log) - p);
+        strcpy(log, tmp);
+    }
 }
 
 void processCH1() {
@@ -83,7 +89,8 @@ void processCH1() {
 
     addLog(hex_out);
 
-    trimLog(raw_log, 1700, 800);
+    if (raw_lines >= RAW_MAX_LINES) trimFirst(raw_log);
+    else raw_lines++;
     raw_log += hex_out;
     raw_log += "\n";
 
@@ -124,7 +131,8 @@ void processCH1() {
         if (cmd == 0x32) { sprintf(dec_out, "%d Trip", seq); }
 
         if (strlen(dec_out) > 0) {
-            trimLog(dec_log, 600, 300);
+            if (dec_lines >= DEC_MAX_LINES) trimFirst(dec_log);
+            else dec_lines++;
             dec_log += dec_out;
             dec_log += "\n";
         }
@@ -160,7 +168,8 @@ void processCH2() {
 
     addLog(hex_out);
 
-    trimLog(raw_log, 1700, 800);
+    if (raw_lines >= RAW_MAX_LINES) trimFirst(raw_log);
+    else raw_lines++;
     raw_log += hex_out;
     raw_log += "\n";
 
@@ -180,7 +189,8 @@ void processCH2() {
         if (cmd == 0x32) { sprintf(dec_out, "%d Trip-Req", seq); }
 
         if (strlen(dec_out) > 0) {
-            trimLog(dec_log, 600, 300);
+            if (dec_lines >= DEC_MAX_LINES) trimFirst(dec_log);
+            else dec_lines++;
             dec_log += dec_out;
             dec_log += "\n";
         }
@@ -236,17 +246,18 @@ void WebUI() {
     sprintf(buf, "<hr><small>TX:%d RX:%d Err:%d/%d #%d</small>", cnt1, cnt2, err1, err2, seq);
     webSend(buf);
 
-    webSend("<div style='width:100%;height:350px;overflow-y:auto;scrollbar-gutter:stable;display:flex;flex-direction:column-reverse'>");
-    webSend("<pre style='margin:0;background:#000;color:#0f0;padding:4px;font-size:11px;width:100%;box-sizing:border-box'>");
+    webSend("<div style='width:100%;height:350px;overflow-y:auto;display:flex;flex-direction:column-reverse;border:1px solid #555'>");
+    webSend("<pre style='margin:0;background:#252525;color:#0f0;padding:4px;font-size:11px;width:100%;box-sizing:border-box'>");
     webSend(raw_log);
     webSend("</pre></div>");
 
-    webSend("<div style='width:100%;height:120px;overflow-y:auto;scrollbar-gutter:stable;display:flex;flex-direction:column-reverse'>");
-    webSend("<pre style='margin:0;background:#000;color:#ff0;padding:4px;font-size:11px;width:100%;box-sizing:border-box'>");
+    webSend("<div style='width:100%;height:120px;overflow-y:auto;display:flex;flex-direction:column-reverse;border:1px solid #555'>");
+    webSend("<pre style='margin:0;background:#252525;color:#ff0;padding:4px;font-size:11px;width:100%;box-sizing:border-box'>");
     if (opt_decode) {
         webSend(dec_log);
     }
     webSend("</pre></div>");
+    webSend("<script>rfsh=1;</script>");
 }
 
 void WebCall() {
@@ -280,6 +291,8 @@ int main() {
     seq = 0;
     raw_log = "";
     dec_log = "";
+    raw_lines = 0;
+    dec_lines = 0;
 
     webPageLabel(0, "Sniffer");
 
