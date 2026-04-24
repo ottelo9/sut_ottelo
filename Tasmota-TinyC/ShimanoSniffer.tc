@@ -251,13 +251,15 @@ void WebUI() {
     webSend(raw_log);
     webSend("</pre></div>");
 
-    webSend("<div style='width:100%;height:120px;overflow-y:auto;display:flex;flex-direction:column-reverse;border:1px solid #555'>");
+    webSend("<div id='db' style='width:100%;height:120px;overflow-y:auto;border:1px solid #555'>");
     webSend("<pre style='margin:0;background:#252525;color:#ff0;padding:4px;font-size:11px;width:100%;box-sizing:border-box'>");
     if (opt_decode) {
         webSend(dec_log);
     }
     webSend("</pre></div>");
-    webSend("<script>rfsh=1;</script>");
+    webSend("<script>rfsh=1;if(_ds==null)_ds=-1;var d=qs('#db');");
+    webSend("if(d){d.scrollTop=_ds<0?d.scrollHeight:_ds;");
+    webSend("d.onscroll=function(){_ds=d.scrollTop+d.clientHeight>=d.scrollHeight-5?-1:d.scrollTop}}</script>");
 }
 
 void WebCall() {
