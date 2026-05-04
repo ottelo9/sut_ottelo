@@ -12,9 +12,9 @@
 #define BAUD         9600
 #define SERIAL_CFG   3
 #define BUF_SIZE     256
-#define GAP_MS       10
-#define MAX_MSG      64
-#define MAX_PAYLOAD  32
+#define GAP_MS       3
+#define MAX_MSG      128
+#define MAX_PAYLOAD  64
 #define LOG_FILE     "/shimano.log"
 #define LOG_MAX_SIZE 100000
 
@@ -45,7 +45,7 @@ char stn[8];
 char raw_log[2000];
 char dec_log[1600];
 char tmp[2000];
-char ver[]="V0.4";
+char ver[]="2026-05-04 20:52";
 
 int raw_lines = 0;
 int dec_lines = 0;
@@ -102,6 +102,7 @@ void processCH1() {
         int cmd = msg1[3] & 0xFF;
         dec_out = "";
         if (cmd == 0x10 && payload_len == 22 && msg1_len >= 25) {
+            int er = msg1[4] & 0xFF;
             int st = msg1[5] & 0xFF;
             int pv = (msg1[9] & 0xFF) | ((msg1[10] & 0xFF) << 8);
             int cx = ((msg1[11] & 0xFF) | ((msg1[12] & 0xFF) << 8)) / 2;
@@ -115,7 +116,7 @@ void processCH1() {
             else if (st == 2) strcpy(stn, "Pre");
             else if (st == 3) strcpy(stn, "Chg");
             else sprintf(stn, "x%02X", st);
-            sprintf(dec_out, "%d %s[%d]", seq, stn, st);
+            sprintf(dec_out, "%d %s[%d] E=%02X", seq, stn, st, er);
             sprintfAppend(dec_out, " Vbat=%d.%03dV", pv/1000, pv%1000);
             sprintfAppend(dec_out, " Vmax=%d.%03dV", cx/1000, cx%1000);
             sprintfAppend(dec_out, " Vmin=%d.%03dV", cn/1000, cn%1000);
@@ -240,8 +241,8 @@ void WebUI() {
     webCheckbox(opt_decode, "Decode");
     webCheckbox(opt_flog, "File Log");
 
-    char buf[100];
-    sprintf(buf, "<hr><small>TX:%d RX:%d Err:%d/%d #%d</small>", cnt1, cnt2, err1, err2, seq);
+    char buf[160];
+    sprintf(buf, "<hr><small>TX:%d RX:%d Err:%d/%d #%d</small> <a href='/ufsd' target='_blank' style='font-size:11px'>[File Manager]</a>", cnt1, cnt2, err1, err2, seq);
     webSend(buf);
 
     webSend("<div style='width:100%;height:350px;overflow-y:auto;display:flex;flex-direction:column-reverse;border:1px solid #555'>");
@@ -249,21 +250,18 @@ void WebUI() {
     webSend(raw_log);
     webSend("</pre></div>");
 
-    webSend("<div id='db' style='width:100%;height:220px;overflow-y:auto;border:1px solid #555'>");
+    webSend("<div style='width:100%;height:350px;overflow-y:auto;display:flex;flex-direction:column-reverse;border:1px solid #555'>");
     webSend("<pre style='margin:0;background:#252525;color:#ff0;padding:4px;font-size:11px;width:100%;box-sizing:border-box'>");
     if (opt_decode) {
         webSend(dec_log);
     }
     webSend("</pre></div>");
-    webSend("<script>rfsh=1;var d=qs('#db');if(d){d.onscroll=null;");
-    webSend("setTimeout(function(){");
-    webSend("if(_ds==null||_ds<0)d.scrollTop=d.scrollHeight;else d.scrollTop=_ds;");
-    webSend("d.onscroll=function(){_ds=(d.scrollTop+d.clientHeight>=d.scrollHeight-5)?-1:d.scrollTop}},0)}</script>");
+    webSend("<script>rfsh=1;if(!window._selHook){window._selHook=1;document.addEventListener('selectionchange',function(){rfsh=window.getSelection().toString().length?0:1;});}</script>");
 }
 
 void WebCall() {
     char buf[64];
-    sprintf(buf, "{s}Shimano %s{m}TX:%d RX:%d E:%d/%d{e}", ver, cnt1, cnt2, err1, err2);
+    sprintf(buf, "{s}Shimano Logger %s{m}TX:%d RX:%d E:%d/%d{e}", ver, cnt1, cnt2, err1, err2);
     webSend(buf);
 }
 
