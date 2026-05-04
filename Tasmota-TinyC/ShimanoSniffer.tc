@@ -45,7 +45,7 @@ char stn[8];
 char raw_log[2000];
 char dec_log[1600];
 char tmp[2000];
-char ver[]="2026-05-04 20:52";
+char ver[]="2026-05-04 21:02";
 
 int raw_lines = 0;
 int dec_lines = 0;
@@ -241,9 +241,12 @@ void WebUI() {
     webCheckbox(opt_decode, "Decode");
     webCheckbox(opt_flog, "File Log");
 
-    char buf[160];
-    sprintf(buf, "<hr><small>TX:%d RX:%d Err:%d/%d #%d</small> <a href='/ufsd' target='_blank' style='font-size:11px'>[File Manager]</a>", cnt1, cnt2, err1, err2, seq);
+    char buf[120];
+    sprintf(buf, "<hr><small>TX:%d RX:%d Err:%d/%d #%d</small>", cnt1, cnt2, err1, err2, seq);
     webSend(buf);
+    webSend(" <a href='/ufsd' target='_blank' style='font-size:11px'>[File Manager]</a>");
+    webSend(" <a href='#' onclick=\"fetch('/cm?cmnd=SSClear');return false\" style='font-size:11px'>[Clear Log]</a>");
+    webSend(" <a href='#' onclick=\"if(confirm('Delete shimano.log?')){fetch('/cm?cmnd=SSDel')};return false\" style='font-size:11px'>[Delete shimano.log]</a>");
 
     webSend("<div style='width:100%;height:350px;overflow-y:auto;display:flex;flex-direction:column-reverse;border:1px solid #555'>");
     webSend("<pre style='margin:0;background:#252525;color:#0f0;padding:4px;font-size:11px;width:100%;box-sizing:border-box'>");
@@ -263,6 +266,22 @@ void WebCall() {
     char buf[64];
     sprintf(buf, "{s}Shimano Logger %s{m}TX:%d RX:%d E:%d/%d{e}", ver, cnt1, cnt2, err1, err2);
     webSend(buf);
+}
+
+void Command(char cmd[]) {
+    if (strFind(cmd, "Clear") == 0) {
+        raw_log = "";
+        dec_log = "";
+        raw_lines = 0;
+        dec_lines = 0;
+        responseCmnd("{\"SS\":\"cleared\"}");
+    } else if (strFind(cmd, "Del") == 0) {
+        int r = fileDelete(LOG_FILE);
+        if (r == 0) responseCmnd("{\"SS\":\"deleted\"}");
+        else responseCmnd("{\"SS\":\"delete-failed\"}");
+    } else {
+        responseCmnd("{\"SS\":\"cmds: Clear,Del\"}");
+    }
 }
 
 void OnExit() {
@@ -294,6 +313,7 @@ int main() {
     dec_lines = 0;
 
     webPageLabel(0, "Sniffer");
+    addCommand("SS");
 
     char info[80];
     sprintf(info, "Shimano Sniffer %s: TX=GPIO%d RX=GPIO%d", ver, CH1_RX_PIN, CH2_RX_PIN);
