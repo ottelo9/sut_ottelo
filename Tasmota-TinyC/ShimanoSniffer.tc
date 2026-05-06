@@ -1,14 +1,12 @@
 // ShimanoSniffer.tc — Dual-channel Shimano UART sniffer for ESP32
 // Web UI with live log, optional decode + file logging.
 
-// NOTE: RX pins must be high-impedance (tri-state) to avoid affecting
-// the charger-battery bus. serialBegin with TX=-1 configures RX-only.
-// If ESP32 internal pull-ups still interfere, external buffering is needed.
+// NOTE: In sniffer mode both pins are high-impedance RX (TX=-1) to avoid
+// affecting the bus. In simulator mode GPIO18 is reconfigured as TX so we
+// can drive the battery's RX line as if we were the motor/charger.
 
-#define CH1_RX_PIN   19 // B-TX Pin (Battery TX — sniff battery responses)
-#define CH1_TX_PIN   -1 // B-TX TX (future: simulator mode)
-#define CH2_RX_PIN   18 // B-RX Pin (Battery RX — sniff charger requests)
-#define CH2_TX_PIN   -1 // B-RX TX (future: simulator mode)
+#define CH1_RX_PIN   19 // B-TX Pin (Battery TX — battery → charger/motor)
+#define CH2_RX_PIN   18 // B-RX Pin (Battery RX — charger/motor → battery; reused as TX in sim mode)
 #define BAUD         9600
 #define SERIAL_CFG   3
 #define BUF_SIZE     256
@@ -38,6 +36,14 @@ int err2 = 0;
 int opt_decode = 0;
 int opt_flog = 0;
 int opt_running = 1;
+int opt_mode = 0;        // 0 = Sniffer, 1 = Simulator
+int last_mode = -1;
+
+int sim_run = 0;
+int sim_seq = 0;
+int sim_interval = 1000;
+int sim_last_send = 0;
+int sim_boot = 1;        // 1 = boot poll (02 02), 0 = ready (03 03)
 
 char hex_out[200];
 char dec_out[100];
@@ -45,18 +51,20 @@ char stn[8];
 char raw_log[2000];
 char dec_log[1600];
 char tmp[2000];
-char ver[]="2026-05-04 21:33";
+char ver[]="2026-05-06 19:40";
 
 int raw_lines = 0;
 int dec_lines = 0;
 #define RAW_MAX_LINES 24
 #define DEC_MAX_LINES 20
 
-int crc16(char data[], int len) {
-    int crc = 0x3078;
+// CRC-16/X-25: poly 0x8408 (reflected), init 0xFFFF, xorout 0xFFFF, refin/refout
+// CRC covers HEADER+LENGTH+PAYLOAD (excludes leading 0x00 prefix)
+int crc16(char data[], int start, int len) {
+    int crc = 0xFFFF;
     int i = 0;
     while (i < len) {
-        crc = crc ^ (data[i] & 0xFF);
+        crc = crc ^ (data[start + i] & 0xFF);
         int j = 0;
         while (j < 8) {
             if (crc & 0x0001) crc = ((crc >> 1) ^ 0x8408) & 0xFFFF;
@@ -78,6 +86,104 @@ void trimFirst(char log[]) {
     }
 }
 
+// ---- Simulator: send frames as if we were the Motor/Display ----
+
+char sim_buf[64];
+
+void simLogTx(int len) {
+    seq++;
+    cnt2++;
+    sprintf(hex_out, "%d TX:", seq);
+    int i = 0;
+    while (i < len) {
+        sprintfAppend(hex_out, " %02X", sim_buf[i] & 0xFF);
+        i++;
+    }
+    addLog(hex_out);
+    if (raw_lines >= RAW_MAX_LINES) trimFirst(raw_log);
+    else raw_lines++;
+    raw_log += hex_out;
+    raw_log += "\n";
+    if (opt_flog) fileLog(LOG_FILE, hex_out, LOG_MAX_SIZE);
+}
+
+void simBuildAndSend(int header, int cmd_present, int cmd, char payload[], int payload_len) {
+    if (h1 < 0) return;
+    sim_buf[0] = 0x00;
+    sim_buf[1] = header & 0xFF;
+    int payload_offset;
+    int total_payload;
+    if (cmd_present) {
+        sim_buf[2] = (1 + payload_len) & 0xFF;
+        sim_buf[3] = cmd & 0xFF;
+        payload_offset = 4;
+        total_payload = 1 + payload_len;
+    } else {
+        sim_buf[2] = 0x00;
+        payload_offset = 3;
+        total_payload = 0;
+    }
+    int i = 0;
+    while (i < payload_len) {
+        sim_buf[payload_offset + i] = payload[i];
+        i++;
+    }
+    int crc_pos = 3 + total_payload;
+    int crc = crc16(sim_buf, 1, 2 + total_payload);
+    sim_buf[crc_pos] = crc & 0xFF;
+    sim_buf[crc_pos + 1] = (crc >> 8) & 0xFF;
+    int total = crc_pos + 2;
+    serialWriteBytes(h1, sim_buf, total);
+    simLogTx(total);
+}
+
+void simSendHandshake() {
+    char p[1];
+    simBuildAndSend(0x40 + (sim_seq & 0x03), 0, 0, p, 0);
+    sim_seq++;
+}
+
+void simSendPoll() {
+    char p[4];
+    if (sim_boot) { p[0] = 0x02; p[1] = 0x02; }
+    else          { p[0] = 0x03; p[1] = 0x03; }
+    p[2] = 0x00; p[3] = 0x00;
+    simBuildAndSend(0x00 + (sim_seq & 0x03), 1, 0x10, p, 4);
+    sim_seq++;
+}
+
+void simSendDevInfo() {
+    char p[1];
+    simBuildAndSend(0x00 + (sim_seq & 0x03), 1, 0x11, p, 0);
+    sim_seq++;
+}
+
+void simSendShutdown() {
+    char p[1];
+    simBuildAndSend(0x00 + (sim_seq & 0x03), 1, 0x21, p, 0);
+    sim_seq++;
+}
+
+void applyMode(int new_mode) {
+    if (h1 >= 0) { serialClose(h1); h1 = -1; }
+    if (h2 >= 0) { serialClose(h2); h2 = -1; }
+    msg1_len = 0;
+    msg2_len = 0;
+    if (new_mode == 1) {
+        // Simulator: combined TX/RX on h1 (RX=GPIO19 / TX=GPIO18)
+        h1 = serialBegin(CH1_RX_PIN, CH2_RX_PIN, BAUD, SERIAL_CFG, BUF_SIZE);
+        addLog("Mode: SIMULATOR (TX=GPIO18 RX=GPIO19)");
+    } else {
+        // Sniffer: two RX-only ports
+        h1 = serialBegin(CH1_RX_PIN, -1, BAUD, SERIAL_CFG, BUF_SIZE);
+        h2 = serialBegin(CH2_RX_PIN, -1, BAUD, SERIAL_CFG, BUF_SIZE);
+        addLog("Mode: SNIFFER");
+    }
+    last_mode = new_mode;
+    sim_seq = 0;
+    sim_last_send = 0;
+}
+
 void processCH1(int len) {
     int payload_len = msg1[2] & 0xFF;
 
@@ -91,8 +197,8 @@ void processCH1(int len) {
         i++;
     }
     int rx_crc = (msg1[len - 2] & 0xFF) | ((msg1[len - 1] & 0xFF) << 8);
-    int calc_crc = crc16(msg1, len - 2);
-    if (rx_crc != calc_crc) {
+    int calc_crc = crc16(msg1, 1, len - 3);
+    if (rx_crc != 0x0000 && rx_crc != calc_crc) {
         sprintfAppend(hex_out, " [CRC!%04X]", calc_crc);
         err1++;
     }
@@ -162,8 +268,8 @@ void processCH2(int len) {
         i++;
     }
     int rx_crc = (msg2[len - 2] & 0xFF) | ((msg2[len - 1] & 0xFF) << 8);
-    int calc_crc = crc16(msg2, len - 2);
-    if (rx_crc != calc_crc) {
+    int calc_crc = crc16(msg2, 1, len - 3);
+    if (rx_crc != 0x0000 && rx_crc != calc_crc) {
         sprintfAppend(hex_out, " [CRC!%04X]", calc_crc);
         err2++;
     }
@@ -251,50 +357,74 @@ void extractCH2() {
 }
 
 void EveryLoop() {
-    if (!opt_running) return;
+    if (opt_mode != last_mode) applyMode(opt_mode);
+    if (opt_mode == 0 && !opt_running) return;
     int now = millis();
 
-    while (serialAvailable(h2) > 0) {
-        int b = serialRead(h2);
-        if (b >= 0) {
-            last2 = millis();
-            if (msg2_len < MAX_MSG) { msg2[msg2_len] = b; msg2_len++; }
-            else { msg2_len = 0; err2++; }
+    if (h2 >= 0) {
+        while (serialAvailable(h2) > 0) {
+            int b = serialRead(h2);
+            if (b >= 0) {
+                last2 = millis();
+                if (msg2_len < MAX_MSG) { msg2[msg2_len] = b; msg2_len++; }
+                else { msg2_len = 0; err2++; }
+            }
         }
     }
-    while (serialAvailable(h1) > 0) {
-        int b = serialRead(h1);
-        if (b >= 0) {
-            last1 = millis();
-            if (msg1_len < MAX_MSG) { msg1[msg1_len] = b; msg1_len++; }
-            else { msg1_len = 0; err1++; }
+    if (h1 >= 0) {
+        while (serialAvailable(h1) > 0) {
+            int b = serialRead(h1);
+            if (b >= 0) {
+                last1 = millis();
+                if (msg1_len < MAX_MSG) { msg1[msg1_len] = b; msg1_len++; }
+                else { msg1_len = 0; err1++; }
+            }
         }
     }
 
     extractCH1();
-    extractCH2();
+    if (h2 >= 0) extractCH2();
 
-    if (msg1_len > 0 && (now - last1) > GAP_MS && serialAvailable(h1) == 0) {
+    if (msg1_len > 0 && (now - last1) > GAP_MS && (h1 < 0 || serialAvailable(h1) == 0)) {
         err1++;
         msg1_len = 0;
     }
-    if (msg2_len > 0 && (now - last2) > GAP_MS && serialAvailable(h2) == 0) {
+    if (h2 >= 0 && msg2_len > 0 && (now - last2) > GAP_MS && serialAvailable(h2) == 0) {
         err2++;
         msg2_len = 0;
+    }
+
+    if (opt_mode == 1 && sim_run && (now - sim_last_send) > sim_interval) {
+        simSendPoll();
+        sim_last_send = now;
     }
 }
 
 void WebUI() {
-    webCheckbox(opt_running, "Sniff");
+    webRadio(opt_mode, "Sniffer|Simulator");
     webCheckbox(opt_decode, "Decode");
     webCheckbox(opt_flog, "File Log");
+    if (opt_mode == 0) {
+        webCheckbox(opt_running, "Sniff");
+    } else {
+        webCheckbox(sim_run, "Auto-Poll");
+        webCheckbox(sim_boot, "Boot-Poll (02 02 vs 03 03)");
+        webNumber(sim_interval, 100, 5000, "Poll Interval (ms)");
+    }
 
-    char buf[120];
+    char buf[160];
     sprintf(buf, "<hr><small>TX:%d RX:%d Err:%d/%d #%d</small>", cnt1, cnt2, err1, err2, seq);
     webSend(buf);
     webSend(" <a href='/ufsd' target='_blank' style='font-size:11px'>[File Manager]</a>");
     webSend(" <a href='javascript:void(0)' onclick=\"document.getElementById('rl').textContent='';document.getElementById('dl').textContent='';fetch('/cm?cmnd=SHClr')\" style='font-size:11px'>[Clear Log]</a>");
     webSend(" <a href='javascript:void(0)' onclick=\"if(confirm('Delete shimano.log?')){fetch('/ufsd?delete=/shimano.log&download=/')}\" style='font-size:11px'>[Delete shimano.log]</a>");
+    if (opt_mode == 1) {
+        webSend("<br>");
+        webSend(" <a href='javascript:void(0)' onclick=\"fetch('/cm?cmnd=SHBoot')\" style='font-size:11px'>[Boot Sequence]</a>");
+        webSend(" <a href='javascript:void(0)' onclick=\"fetch('/cm?cmnd=SHHnd')\" style='font-size:11px'>[Handshake]</a>");
+        webSend(" <a href='javascript:void(0)' onclick=\"fetch('/cm?cmnd=SHPoll')\" style='font-size:11px'>[Poll]</a>");
+        webSend(" <a href='javascript:void(0)' onclick=\"fetch('/cm?cmnd=SHShut')\" style='font-size:11px'>[Shutdown]</a>");
+    }
 
     webSend("<div style='width:100%;height:350px;overflow-y:auto;display:flex;flex-direction:column-reverse;border:1px solid #555'>");
     webSend("<pre id='rl' style='margin:0;background:#252525;color:#0f0;padding:4px;font-size:11px;width:100%;box-sizing:border-box'>");
@@ -323,8 +453,27 @@ void Command(char cmd[]) {
         raw_lines = 0;
         dec_lines = 0;
         responseCmnd("{\"SH\":\"cleared\"}");
+    } else if (strFind(cmd, "Hnd") == 0) {
+        if (opt_mode == 1) { simSendHandshake(); responseCmnd("{\"SH\":\"handshake\"}"); }
+        else responseCmnd("{\"SH\":\"not in sim mode\"}");
+    } else if (strFind(cmd, "Boot") == 0) {
+        if (opt_mode == 1) {
+            sim_boot = 1;
+            simSendHandshake();
+            delay(80);
+            simSendDevInfo();
+            delay(80);
+            simSendPoll();
+            responseCmnd("{\"SH\":\"boot\"}");
+        } else responseCmnd("{\"SH\":\"not in sim mode\"}");
+    } else if (strFind(cmd, "Poll") == 0) {
+        if (opt_mode == 1) { simSendPoll(); responseCmnd("{\"SH\":\"poll\"}"); }
+        else responseCmnd("{\"SH\":\"not in sim mode\"}");
+    } else if (strFind(cmd, "Shut") == 0) {
+        if (opt_mode == 1) { simSendShutdown(); responseCmnd("{\"SH\":\"shutdown\"}"); }
+        else responseCmnd("{\"SH\":\"not in sim mode\"}");
     } else {
-        responseCmnd("{\"SH\":\"cmds: Clr\"}");
+        responseCmnd("{\"SH\":\"cmds: Clr,Hnd,Boot,Poll,Shut\"}");
     }
 }
 
@@ -335,19 +484,6 @@ void OnExit() {
 }
 
 int main() {
-    h1 = serialBegin(CH1_RX_PIN, CH1_TX_PIN, BAUD, SERIAL_CFG, BUF_SIZE);
-    if (h1 < 0) {
-        addLog("ERROR: CH1 serialBegin failed!");
-        return -1;
-    }
-
-    h2 = serialBegin(CH2_RX_PIN, CH2_TX_PIN, BAUD, SERIAL_CFG, BUF_SIZE);
-    if (h2 < 0) {
-        addLog("ERROR: CH2 serialBegin failed!");
-        serialClose(h1);
-        return -1;
-    }
-
     msg1_len = 0; cnt1 = 0; err1 = 0; last1 = millis();
     msg2_len = 0; cnt2 = 0; err2 = 0; last2 = millis();
     seq = 0;
@@ -356,11 +492,17 @@ int main() {
     raw_lines = 0;
     dec_lines = 0;
 
-    webPageLabel(0, "Sniffer");
+    applyMode(opt_mode);
+    if (h1 < 0) {
+        addLog("ERROR: serialBegin failed!");
+        return -1;
+    }
+
+    webPageLabel(0, "Shimano");
     addCommand("SH");
 
     char info[80];
-    sprintf(info, "Shimano Sniffer %s: TX=GPIO%d RX=GPIO%d", ver, CH1_RX_PIN, CH2_RX_PIN);
+    sprintf(info, "Shimano Logger %s: B-TX=GPIO%d B-RX=GPIO%d", ver, CH1_RX_PIN, CH2_RX_PIN);
     addLog(info);
     return 0;
 }
