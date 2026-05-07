@@ -1,5 +1,25 @@
 # ShimanoLogAnalyzer.ps1 — GUI tool for analyzing Shimano UART logs
 # Paste log lines (R:/R2:/B-TX:/B-RX:, with optional seq number), click Analyze.
+#
+# Decoded fields (cmd 0x10 telemetry, length=22):
+#   [4]  Fault Byte   00=OK, 10=BMS-Lockout, 15=Auth-Failed/Degraded, 25=No-Cells
+#   [5]  State        00=Init, 01=Active(motor), 02=Precharge, 03=Charge
+#   [7]  Cell Conn    00=OK, 02=No-Cell-Conn (BMS lockout indicator)
+#   [9..10]  Pack Voltage (mV, LE)
+#   [11..12] Cell Vmax  (raw/2 = mV)
+#   [13..14] Cell Vmin  (raw/2 = mV)
+#   [15..17] NTC max / NTC avg / MOSFET temp (deg C)
+#   [18]     SOC (%)
+#   [19..21] Charger: ChgCtr/00/00 — Motor: 90 01 / current-load
+#
+# Polls (cmd 0x10 length=5) — payload byte[4]/[5]:
+#   00 00  Charger          | 04 ..  Charger init/retry
+#   02 02  Motor boot (bike) | 02 03  Motor boot (gregyedlik)
+#   03 31  Motor first ready | 03 05  Motor steady (bike)
+#   03 03  Motor (greg early)| 03 01  Motor steady (greg late)
+#
+# Auth (cmd 0x30): 02 01 = Charger flavor, 03 02 = Motor flavor.
+# Cmd 0x12: Unknown command from gregyedlik's replay sequence.
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -25,14 +45,56 @@ $FIELD_COLORS = @{
     "structural" = [System.Drawing.Color]::FromArgb(220, 220, 220)
     "cmd"        = [System.Drawing.Color]::FromArgb(255, 215, 120)
     "state"      = [System.Drawing.Color]::FromArgb(210, 175, 255)
+    "fault"      = [System.Drawing.Color]::FromArgb(255, 150, 150)
     "voltage"    = [System.Drawing.Color]::FromArgb(255, 255, 140)
     "cellmax"    = [System.Drawing.Color]::FromArgb(170, 235, 255)
     "cellmin"    = [System.Drawing.Color]::FromArgb(140, 195, 255)
     "temp"       = [System.Drawing.Color]::FromArgb(255, 190, 120)
     "soc"        = [System.Drawing.Color]::FromArgb(170, 255, 170)
     "chgctr"     = [System.Drawing.Color]::FromArgb(255, 240, 160)
+    "current"    = [System.Drawing.Color]::FromArgb(255, 200, 100)
     "crc"        = [System.Drawing.Color]::FromArgb(200, 200, 200)
     "payload"    = [System.Drawing.Color]::FromArgb(240, 230, 200)
+}
+
+# ---------- HELPER: decode common bytes ----------
+function Get-FaultName([int]$b) {
+    switch ($b) {
+        0x00 { return "OK" }
+        0x10 { return "BMS-Lockout" }
+        0x15 { return "Auth-Failed/Degraded" }
+        0x25 { return "No-Cells" }
+        default { return "0x$("{0:X2}" -f $b)" }
+    }
+}
+
+function Get-CellConnName([int]$b) {
+    switch ($b) {
+        0x00 { return "OK" }
+        0x02 { return "No-Cell-Conn" }
+        default { return "0x$("{0:X2}" -f $b)" }
+    }
+}
+
+function Get-PollName([int]$p1, [int]$p2) {
+    if ($p1 -eq 0x00 -and $p2 -eq 0x00) { return "Charger" }
+    if ($p1 -eq 0x02 -and $p2 -eq 0x02) { return "Motor boot (bike)" }
+    if ($p1 -eq 0x02 -and $p2 -eq 0x03) { return "Motor boot (gregyedlik)" }
+    if ($p1 -eq 0x03 -and $p2 -eq 0x31) { return "Motor ready (first)" }
+    if ($p1 -eq 0x03 -and $p2 -eq 0x05) { return "Motor steady (bike)" }
+    if ($p1 -eq 0x03 -and $p2 -eq 0x03) { return "Motor ready (gregyedlik early)" }
+    if ($p1 -eq 0x03 -and $p2 -eq 0x01) { return "Motor steady (gregyedlik late)" }
+    if ($p1 -eq 0x04) { return "Charger (init/retry flag)" }
+    return "p1=0x$("{0:X2}" -f $p1) p2=0x$("{0:X2}" -f $p2)"
+}
+
+function Get-AuthFlavor([byte[]]$payload) {
+    if ($payload.Count -lt 3) { return "?" }
+    # payload[0] = cmd 0x30, payload[1..2] = format magic
+    $m1 = $payload[1]; $m2 = $payload[2]
+    if ($m1 -eq 0x03 -and $m2 -eq 0x02) { return "Motor" }
+    if ($m1 -eq 0x02 -and $m2 -eq 0x01) { return "Charger" }
+    return "Unknown"
 }
 
 # ---------- STRUCTURED PARSE ----------
@@ -98,38 +160,62 @@ function Parse-ShimanoMessage([string]$rawLine) {
     $null = $fields.Add(@{N="Command"; V="0x$("{0:X2}" -f $cmd)"; S=3; E=3; C=$FIELD_COLORS["cmd"]})
 
     if ($cmd -eq 0x10 -and $length -eq 22 -and $bytes.Count -ge 25) {
+        $fault = $bytes[4]
         $state = $bytes[5]
+        $cellConn = $bytes[7]
         $stName = switch ($state) { 0x00 {"Init"}; 0x01 {"Active"}; 0x02 {"Precharge"}; 0x03 {"Charging"}; default {"0x$("{0:X2}" -f $state)"} }
         $packV = [int]$bytes[9] + [int]$bytes[10] * 256
         $vMax = [int](([int]$bytes[11] + [int]$bytes[12] * 256) / 2)
         $vMin = [int](([int]$bytes[13] + [int]$bytes[14] * 256) / 2)
         $ntcM = $bytes[15]; $ntcA = $bytes[16]; $th = $bytes[17]
-        $soc = $bytes[18]; $chg = $bytes[19]
+        $soc = $bytes[18]
+        $b19 = $bytes[19]; $b20 = $bytes[20]; $b21 = $bytes[21]
 
-        $null = $fields.Add(@{N="Fault/Unk"; V="0x$("{0:X2}" -f $bytes[4])"; S=4; E=4; C=$g})
+        # offset 16-17 (bytes 19-20): motor=90 01, charger=ChgCtr in byte 19
+        # offset 18 (byte 21): motor=current indicator, charger=00
+        $isMotor = ($state -eq 0x01) -or ($b19 -eq 0x90 -and $b20 -eq 0x01)
+
+        $faultColor = if ($fault -eq 0x00) { $g } else { $FIELD_COLORS["fault"] }
+        $cellColor = if ($cellConn -eq 0x00) { $g } else { $FIELD_COLORS["fault"] }
+
+        $null = $fields.Add(@{N="Fault Byte"; V="$(Get-FaultName $fault) (0x$("{0:X2}" -f $fault))"; S=4; E=4; C=$faultColor})
         $null = $fields.Add(@{N="State"; V="$stName (0x$("{0:X2}" -f $state))"; S=5; E=5; C=$FIELD_COLORS["state"]})
-        $null = $fields.Add(@{N="Unknown"; V="$("{0:X2}" -f $bytes[6]) $("{0:X2}" -f $bytes[7]) $("{0:X2}" -f $bytes[8])"; S=6; E=8; C=$g})
-        $null = $fields.Add(@{N="Pack Voltage"; V="$packV mV ($("{0:N1}" -f ($packV/1000.0))V)"; S=9; E=10; C=$FIELD_COLORS["voltage"]})
-        $null = $fields.Add(@{N="Vmax"; V="$vMax mV"; S=11; E=12; C=$FIELD_COLORS["cellmax"]})
-        $null = $fields.Add(@{N="Vmin"; V="$vMin mV"; S=13; E=14; C=$FIELD_COLORS["cellmin"]})
-        $null = $fields.Add(@{N="Temp Max"; V="$ntcM C"; S=15; E=15; C=$FIELD_COLORS["temp"]})
-        $null = $fields.Add(@{N="Temp Avg"; V="$ntcA C"; S=16; E=16; C=$FIELD_COLORS["temp"]})
+        $null = $fields.Add(@{N="Reserved 6"; V="0x$("{0:X2}" -f $bytes[6])"; S=6; E=6; C=$g})
+        $null = $fields.Add(@{N="Cell Connection"; V="$(Get-CellConnName $cellConn) (0x$("{0:X2}" -f $cellConn))"; S=7; E=7; C=$cellColor})
+        $null = $fields.Add(@{N="Reserved 8"; V="0x$("{0:X2}" -f $bytes[8])"; S=8; E=8; C=$g})
+        $null = $fields.Add(@{N="Pack Voltage"; V="$packV mV ($("{0:N3}" -f ($packV/1000.0))V)"; S=9; E=10; C=$FIELD_COLORS["voltage"]})
+        $null = $fields.Add(@{N="Vmax (per-cell)"; V="$vMax mV"; S=11; E=12; C=$FIELD_COLORS["cellmax"]})
+        $null = $fields.Add(@{N="Vmin (per-cell)"; V="$vMin mV"; S=13; E=14; C=$FIELD_COLORS["cellmin"]})
+        $null = $fields.Add(@{N="NTC max"; V="$ntcM C"; S=15; E=15; C=$FIELD_COLORS["temp"]})
+        $null = $fields.Add(@{N="NTC avg"; V="$ntcA C"; S=16; E=16; C=$FIELD_COLORS["temp"]})
         $null = $fields.Add(@{N="MOSFET Temp"; V="$th C"; S=17; E=17; C=$FIELD_COLORS["temp"]})
         $null = $fields.Add(@{N="SOC"; V="$soc %"; S=18; E=18; C=$FIELD_COLORS["soc"]})
-        $null = $fields.Add(@{N="Charge Counter"; V="$chg"; S=19; E=19; C=$FIELD_COLORS["chgctr"]})
-        $null = $fields.Add(@{N="Unknown 20-24"; V="..."; S=20; E=24; C=$g})
+        if ($isMotor) {
+            $null = $fields.Add(@{N="Motor Const (90 01)"; V="$("{0:X2}" -f $b19) $("{0:X2}" -f $b20)"; S=19; E=20; C=$FIELD_COLORS["chgctr"]})
+            $null = $fields.Add(@{N="Current/Load Indicator"; V="$b21 (0x$("{0:X2}" -f $b21))"; S=21; E=21; C=$FIELD_COLORS["current"]})
+        } else {
+            $null = $fields.Add(@{N="Charge Counter"; V="$b19"; S=19; E=19; C=$FIELD_COLORS["chgctr"]})
+            $null = $fields.Add(@{N="Reserved 20"; V="0x$("{0:X2}" -f $b20)"; S=20; E=20; C=$g})
+            $null = $fields.Add(@{N="Reserved 21"; V="0x$("{0:X2}" -f $b21)"; S=21; E=21; C=$g})
+        }
+        $null = $fields.Add(@{N="Reserved 22-24"; V="..."; S=22; E=24; C=$g})
     } elseif ($cmd -eq 0x10 -and $length -eq 5) {
-        $null = $fields.Add(@{N="Poll"; V="Telemetry Poll"; S=4; E=7; C=$FIELD_COLORS["payload"]})
+        $p1 = $bytes[4]; $p2 = $bytes[5]
+        $null = $fields.Add(@{N="Poll"; V=(Get-PollName $p1 $p2); S=4; E=7; C=$FIELD_COLORS["payload"]})
     } elseif ($cmd -eq 0x30) {
-        $null = $fields.Add(@{N="Auth"; V="Authentication ($length B)"; S=4; E=(3+$length-1); C=$FIELD_COLORS["payload"]})
+        $authPayload = $bytes[3..(3+$length-1)]
+        $flavor = Get-AuthFlavor $authPayload
+        $null = $fields.Add(@{N="Auth ($flavor)"; V="$flavor flavor, $length B (cmd+payload)"; S=4; E=(3+$length-1); C=$FIELD_COLORS["payload"]})
     } elseif ($cmd -eq 0x31) {
         $null = $fields.Add(@{N="Specs"; V="Battery Specs ($length B)"; S=4; E=(3+$length-1); C=$FIELD_COLORS["payload"]})
     } elseif ($cmd -eq 0x11) {
         $null = $fields.Add(@{N="DevInfo"; V="Device Info ($length B)"; S=4; E=(3+$length-1); C=$FIELD_COLORS["payload"]})
+    } elseif ($cmd -eq 0x12) {
+        $null = $fields.Add(@{N="Cmd 0x12"; V="Unknown (gregyedlik replay; len=$length)"; S=4; E=(3+$length-1); C=$FIELD_COLORS["payload"]})
     } elseif ($cmd -eq 0x21) {
         $null = $fields.Add(@{N="Shutdown"; V="Shutdown ($length B)"; S=4; E=(3+$length-1); C=$FIELD_COLORS["payload"]})
     } elseif ($cmd -eq 0x32) {
-        $null = $fields.Add(@{N="Trip"; V="Trip/Config ($length B)"; S=4; E=(3+$length-1); C=$FIELD_COLORS["payload"]})
+        $null = $fields.Add(@{N="Trip"; V="Trip/Config ($length B; possibly date/time)"; S=4; E=(3+$length-1); C=$FIELD_COLORS["payload"]})
     } else {
         $null = $fields.Add(@{N="Payload"; V="Cmd 0x$("{0:X2}" -f $cmd) ($length B)"; S=4; E=(3+$length-1); C=$FIELD_COLORS["payload"]})
     }
@@ -262,28 +348,17 @@ function Decode-ShimanoLine([string]$line) {
         if ($length -eq 5) {
             $pollByte1 = $payload[1]
             $pollByte2 = $payload[2]
-            $pollInfo = ""
-            if ($pollByte1 -eq 0x00 -and $pollByte2 -eq 0x00) {
-                $pollInfo = "Charger poll"
-            } elseif ($pollByte1 -eq 0x02 -and $pollByte2 -eq 0x02) {
-                $pollInfo = "Motor poll (boot)"
-            } elseif ($pollByte1 -eq 0x03 -and $pollByte2 -eq 0x03) {
-                $pollInfo = "Motor poll (ready)"
-            } elseif ($pollByte1 -eq 0x04) {
-                $pollInfo = "Charger poll (init flag 0x04)"
-            } else {
-                $pollInfo = "Poll (p1=0x$("{0:X2}" -f $pollByte1) p2=0x$("{0:X2}" -f $pollByte2))"
-            }
+            $pollInfo = "Poll: " + (Get-PollName $pollByte1 $pollByte2)
             return "[$chLabel] ${sender}Seq=$seq | $pollInfo | $crcOk"
         }
 
         # Telemetry response (Length=22)
         if ($length -eq 22 -and $payload.Count -ge 22) {
-            $unknown1  = $payload[1]
+            $faultByte = $payload[1]
             $state     = $payload[2]
-            $unk3      = $payload[3]
-            $unk4      = $payload[4]
-            $unk5      = $payload[5]
+            $resv3     = $payload[3]
+            $cellConn  = $payload[4]
+            $resv5     = $payload[5]
 
             $packV     = [int]$payload[6] + [int]$payload[7] * 256
             $vMax      = [int](([int]$payload[8] + [int]$payload[9] * 256) / 2)
@@ -292,9 +367,9 @@ function Decode-ShimanoLine([string]$line) {
             $ntcAvg    = $payload[13]
             $th002     = $payload[14]
             $soc       = $payload[15]
-            $chargeCtr = $payload[16]
-            $off17     = $payload[17]
-            $off18     = $payload[18]
+            $b16       = $payload[16]
+            $b17       = $payload[17]
+            $b18       = $payload[18]
 
             switch ($state) {
                 0x00 { $stName = "Init" }
@@ -304,31 +379,37 @@ function Decode-ShimanoLine([string]$line) {
                 default { $stName = "0x$("{0:X2}" -f $state)" }
             }
 
-            $faultInfo = ""
-            if ($unknown1 -ne 0x00) {
-                $faultInfo = " FAULT=0x$("{0:X2}" -f $unknown1)"
-            }
-            $unkInfo = ""
-            if ($unk3 -ne 0 -or $unk4 -ne 0 -or $unk5 -ne 0) {
-                $unkInfo = " Unk3-5=$("{0:X2}" -f $unk3)/$("{0:X2}" -f $unk4)/$("{0:X2}" -f $unk5)"
-            }
+            $faultStr = "Fault=" + (Get-FaultName $faultByte)
+            $cellStr2 = ""
+            if ($cellConn -ne 0x00) { $cellStr2 = " CellConn=" + (Get-CellConnName $cellConn) }
+            $resvInfo = ""
+            if ($resv3 -ne 0 -or $resv5 -ne 0) { $resvInfo = " Resv3/5=$("{0:X2}" -f $resv3)/$("{0:X2}" -f $resv5)" }
 
-            $voltStr = "$packV mV ($("{0:N1}" -f ($packV / 1000.0))V)"
+            $voltStr = "$packV mV ($("{0:N3}" -f ($packV / 1000.0))V)"
             $cellStr = "Vmax=$vMax Vmin=$vMin"
             $tempStr = "T=$ntcMax/$ntcAvg/${th002}C"
 
-            $extra = ""
-            if ($off17 -ne 0 -or $off18 -ne 0) {
-                $extra = " | Off17=0x$("{0:X2}" -f $off17) Off18=0x$("{0:X2}" -f $off18)"
+            # Distinguish motor (90 01 + current) vs charger (ChgCtr) context
+            $isMotor = ($state -eq 0x01) -or ($b16 -eq 0x90 -and $b17 -eq 0x01)
+            if ($isMotor) {
+                $extra = " | MotorConst=$("{0:X2}" -f $b16) $("{0:X2}" -f $b17) Current/Load=$b18"
+            } else {
+                $extra = " | ChgCtr=$b16 b17=$("{0:X2}" -f $b17) b18=$("{0:X2}" -f $b18)"
             }
 
-            $result = "[$chLabel] ${sender}Seq=$seq | State=$stName$faultInfo$unkInfo | $voltStr | $cellStr | $tempStr | SOC=${soc}% | ChgCtr=$chargeCtr$extra | $crcOk"
+            $result = "[$chLabel] ${sender}Seq=$seq | State=$stName | $faultStr$cellStr2$resvInfo | $voltStr | $cellStr | $tempStr | SOC=${soc}%$extra | $crcOk"
             return $result
         }
 
         # Other Length for Cmd 0x10
         $payloadHex = ($payload | ForEach-Object { "{0:X2}" -f $_ }) -join " "
         return "[$chLabel] ${sender}Seq=$seq | Cmd 0x10 Len=$length | $payloadHex | $crcOk"
+    }
+
+    # --- Cmd 0x12: Unknown (gregyedlik replay) ---
+    if ($cmd -eq 0x12) {
+        $payloadHex = ($payload | ForEach-Object { "{0:X2}" -f $_ }) -join " "
+        return "[$chLabel] ${sender}Seq=$seq | Cmd 0x12 (unknown, gregyedlik replay) Len=$length | $payloadHex | $crcOk"
     }
 
     # --- Cmd 0x11: Device Info ---
@@ -360,8 +441,10 @@ function Decode-ShimanoLine([string]$line) {
 
     # --- Cmd 0x30: Authentication ---
     if ($cmd -eq 0x30) {
+        $flavor = Get-AuthFlavor $payload
+        $direction = if ($length -eq 17) { "Req" } elseif ($length -eq 18) { "Resp" } else { "Len=$length" }
         $payloadHex = ($payload | ForEach-Object { "{0:X2}" -f $_ }) -join " "
-        return "[$chLabel] ${sender}Seq=$seq | Auth Len=$length | $payloadHex | $crcOk"
+        return "[$chLabel] ${sender}Seq=$seq | Auth $direction ($flavor) | $payloadHex | $crcOk"
     }
 
     # --- Cmd 0x31: Battery Specs ---

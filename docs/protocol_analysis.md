@@ -8,16 +8,20 @@ Analysis of the UART communication on a Shimano e-bike system:
 - **Motor/Display ↔ Battery**: Motor DU-E6012 and display SC-E6010 communicating with BT-E6000
 
 Battery: 36V, 10S4P Li-Ion, 418Wh.
-Data captured using dual-channel sniffing on a Raspberry Pi — hardware UART on GPIO15 (battery) and pigpio bit-bang serial on GPIO14 (charger/motor).
+Data captured via dual-channel UART sniffing on the bus (battery TX line + charger/motor TX line). Earlier captures used a Raspberry Pi setup; newer captures use an ESP32-based logger.
 
 ## Bus Topology
 
-Half-duplex UART bus at 9600 baud (8N1). Both devices share the bus but use separate TX/RX lines.
+Two-wire UART (8N1, 9600 baud) — separate TX/RX lines, not shared half-duplex.
 
-| Channel | Pin | Device | Sender Addresses |
-|---------|-----|--------|-----------------|
-| CH1 (R:) | GPIO15 (RX) | Battery (BT-E6000) | 0x80, 0xC0 |
-| CH2 (R2:) | GPIO14 (TX) | Charger (EC-E6002) | 0x00, 0x40 |
+| Channel | Wire | Device | Sender Addresses |
+|---------|------|--------|------------------|
+| CH1 (`R:` / `B-TX:`) | Battery TX → Charger/Motor RX | Battery (BT-E6000/E6001) | 0x80, 0xC0 |
+| CH2 (`R2:` / `B-RX:`) | Charger/Motor TX → Battery RX | Charger (EC-E6002) or Motor/Display (DU-E6012/SC-E6010) | 0x00, 0x40 |
+
+The two wires are physically distinct (not a shared bus). Both Charger and Motor share the same 0x00/0x40 sender address space — they are never connected to the battery simultaneously. Older capture logs use `R:`/`R2:` channel labels; newer logs use `B-TX:`/`B-RX:`. Both refer to the same wires.
+
+UART config: **9600 baud, 8 data bits, no parity, 1 stop bit (8N1)**.
 
 ## Message Frame Format
 
@@ -42,6 +46,17 @@ Battery → 00 C1 00 35 DC       Ping (Sender=0xC0, Seq=1, Length=0, CRC valid)
 Charger → 00 41 00 F9 50       Pong (Sender=0x40, Seq=1, Length=0, CRC valid)
 ```
 
+#### Cold-wake from deep sleep
+
+When the BMS is fully asleep, just opening UART is not sufficient — the MCU is unpowered until it sees a sustained 3.3V on the battery's RX pin (transistor wake circuit). Empirical wake sequence observed:
+
+1. Hold battery RX line at **3.3V (UART idle HIGH)** for ~6 seconds
+2. Within that window, send 3 raw handshake bursts `00 40 00 21 49` at approximately T+280ms, T+480ms, T+680ms
+3. After the 3rd burst, the battery's MCU bootstraps and sends its own spontaneous `00 C0 00 ED C5` Ping
+4. From that point, the normal protocol can proceed
+
+This wake also fires when the user presses the SoC indicator button on the battery side, or the bike's PowerON button — both create the same 3.3V pulse on the battery's RX pin.
+
 ### 2. Charger Startup Commands
 
 After the handshake, the charger exchanges two commands before starting telemetry polls. Captured 2026-04-12 with dual-channel ordered output ([full log](logs/2026-04-12_charger_dual_channel.log)).
@@ -59,25 +74,45 @@ After the handshake, the charger exchanges two commands before starting telemetr
 
 #### Cmd 0x30 — Authentication (Length=17 request, Length=18 response)
 
-The charger sends a 17-byte challenge; the battery responds with 18 bytes. Both the challenge and response data change every session — consistent with a cryptographic authentication handshake.
+The charger/motor sends a 17-byte challenge; the battery responds with 18 bytes. Both the challenge and response data change every session — consistent with a cryptographic authentication handshake.
+
+**Two flavors observed**, distinguished by payload bytes 1–2:
+- **Charger**: payload starts `30 02 01 ...` (cmd echo `30`, magic `02 01`)
+- **Motor**: payload starts `30 03 02 00 00 ...` (cmd echo `30`, magic `03 02 00 00`)
 
 ```
-Session 1:
+Charger session 1:
 R2: 00 03 11 30 02 01 12 77 4F 29 1F 48 4F 59 7A D9 F8 0D 6B 04 F7 0D
 R:  00 83 12 30 00 BF 6B C1 2E 2F 61 9B E1 26 33 92 FD EE 4A C8 D1 CB B3
 
-Session 2 (reconnect):
+Charger session 2 (reconnect):
 R2: 00 03 11 30 02 01 20 19 04 E5 2C 6C A6 12 7C D8 1E 3B 22 04 2E E8
 R:  00 83 12 30 00 CF AB 96 7F 00 33 23 61 B2 8F AA 2C 10 3F EB 38 37 11
+
+Motor session A (BT-E6000):
+R2: 00 01 11 30 03 02 00 00 CB 72 1A 01 4B 2E CB 72 1A 01 2E 03 BE 18
+R:  00 81 12 30 00 38 A2 05 89 19 32 01 77 1A 5F 06 C7 50 7A 4D 8A 5F 8D
+
+Motor session B (BT-E6000, same boot, after off/on):
+R2: 00 01 11 30 03 02 00 00 73 1B 02 4C 2F CC 73 1B 02 4C B8 02 F1 54
+R:  00 81 12 30 00 1B B5 1E 1A A7 C0 10 80 4D 13 FD EF 36 AF 66 C0 82 AC
 ```
 
-| Offset | Request | Response | Notes |
-|--------|---------|----------|-------|
-| 0 | `30` | `30` | Cmd echo |
-| 1 | `02` | `00` | Request: constant `02`. Response: status (0x00 = OK) |
-| 2 | `01` | — | Constant |
-| 3–16 | varies | — | Challenge (14 bytes, changes every session) |
-| 2–17 | — | varies | Response (16 bytes, changes every session) |
+**Motor Auth-Req payload structure** (16 bytes after cmd 0x30):
+
+| Bytes | Field | Notes |
+|-------|-------|-------|
+| 0–3 | `03 02 00 00` | Constant header / magic |
+| 4–7 | X (4 bytes) | Random challenge — changes every session |
+| 8–9 | Y (2 bytes) | Random field — changes per session |
+| 10–13 | X (4 bytes) | Repeat of bytes 4–7 (verification echo) |
+| 14–15 | Z (2 bytes) | Random field — changes per session |
+
+The X-block always repeats verbatim at offsets 4–7 and 10–13 — this is structural validation the battery checks. The Y and Z fields appear cryptographically random.
+
+**Anti-replay**: Battery rejects byte-for-byte replays of past Auth-Req captures (silent, no Auth-Resp). It accepts new challenges that match the X/Y/Z structure, but only when generated by a key holder — random fresh bytes from a non-key party are also rejected. Real algorithm requires reverse engineering of BMS firmware.
+
+Battery's Auth-Resp content is also cryptographic. The motor/charger does **not** validate the response — replay tests show the battery proceeds normally even when motor sends nonsense, suggesting the auth handshake is one-way (battery validates motor) rather than mutual.
 
 michielvg's register scan with a simple 2-byte request (`30 00`) returned only a 2-byte response (`12`). The full 17-byte charger request is required to trigger the 18-byte authentication response.
 
@@ -141,9 +176,11 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 | 1 | `80` | HEADER | Upper nibble = sender address (0x80 = Battery), lower nibble = sequence number (0 here). Seq cycles 0→1→2→3→0 across successive messages. |
 | 2 | `16` | LENGTH | 22 payload bytes |
 | 3 | `10` | Cmd (offset 0) | 0x10 (Telemetry) |
-| 4 | `00` | ? (offset 1) | Always 0x00 (BT-E6000). BT-E6001 fault: 0x10 |
-| 5 | `03` | State (offset 2) | 0x03 = Charging (charger), 0x01 = Active (motor) |
-| 6–8 | `00 00 00` | ? (offset 3–5) | BT-E6000: always zero. BT-E6001 fault: `00 02 05` / `00 02 00` |
+| 4 | `00` | Status / Fault Byte (offset 1) | 0x00=OK; 0x10=BMS-Lockout; 0x15=Auth-Failed/Degraded; 0x25=No-Cells |
+| 5 | `03` | State (offset 2) | 0x00=Init, 0x01=Active (motor), 0x02=Precharge, 0x03=Charging |
+| 6 | `00` | Reserved (offset 3) | Always 0x00 |
+| 7 | `00` | Cell Connection Flag (offset 4) | 0x00=cells OK; 0x02=cells disconnected/BMS-lockout indicator |
+| 8 | `00` | Reserved (offset 5) | BT-E6001 fault: 0x05 in 1st response, 0x00 later. BT-E6000: always 0x00 |
 | 9–10 | `F7 95` | Pack Voltage (offset 6–7) | 0x95F7 = 38391 mV (LE) |
 | 11–12 | `04 1E` | Cell V MAX (offset 8–9) | 0x1E04 = 7684 → 3842 mV |
 | 13–14 | `FC 1D` | Cell V MIN (offset 10–11) | 0x1DFC = 7676 → 3838 mV |
@@ -151,18 +188,22 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 | 16 | `15` | NTC AVG (offset 13) | 21°C |
 | 17 | `16` | TH002 (offset 14) | 22°C (MOSFET sensor) |
 | 18 | `3D` | **SOC** (offset 15) | **61%** |
-| 19 | `12` | Charge counter (offset 16) | 18 (charger mode) |
-| 20–24 | `00 00 00 00 00` | Reserved (offset 17–21) | Always zero |
+| 19 | `12` | ChgCtr/MotorConst-lo (offset 16) | Charger: charge counter. Motor: always 0x90 (= register 0xAA byte 0) |
+| 20 | `00` | MotorConst-hi (offset 17) | Charger: 0x00. Motor: always 0x01 (= register 0xAA byte 1) |
+| 21 | `00` | Current/Load Indicator (offset 18) | Charger: 0x00. Motor: ~0x01 idle, climbs to 0x1C (28) under load |
+| 22–24 | `00 00 00` | Reserved (offset 19–21) | Always zero |
 | 25–26 | `87 F1` | CRC-16/X-25 | Over bytes 1–24 (LE) |
 
 #### Telemetry Field Map (payload offsets, starting after LENGTH byte)
 
 | Offset | Bytes | Type | Field | Notes |
 |--------|-------|------|-------|-------|
-| 0 | `10` | uint8 | Cmd | Always 0x10 |
-| 1 | | uint8 | ? | BT-E6000: always 0x00. BT-E6001 (fault): 0x10 in first response |
-| 2 | | uint8 | State | Charger: 0x00=Init, 0x02=Precharge, 0x03=Charging. Motor: 0x01=Active |
-| 3–5 | | | ? | BT-E6000: always `00 00 00`. BT-E6001 (fault): `00 02 05` / `00 02 00` |
+| 0 | | uint8 | Cmd | Always 0x10 |
+| 1 | | uint8 | **Status / Fault Byte** | 0x00=OK; 0x10=BMS-Lockout; 0x15=Auth-Failed/Degraded; 0x25=No-Cells (per michielvg's cellless scan) |
+| 2 | | uint8 | **State** | 0x00=Init, 0x01=Active (motor), 0x02=Precharge, 0x03=Charging |
+| 3 | | uint8 | Reserved | Always 0x00 |
+| 4 | | uint8 | **Cell Connection Flag** | 0x00=cells OK; 0x02=cells disconnected — appears under BMS-lockout |
+| 5 | | uint8 | Reserved | BT-E6001 fault: 0x05 (1st) / 0x00 (later); BT-E6000: always 0x00 |
 | 6–7 | LE uint16 | **Pack Voltage (mV)** | See voltage table below |
 | 8–9 | LE uint16 | **Cell Voltage MAX (0.5 mV)** | Max cell group voltage. Divide by 2 for mV. Confirmed with multimeter. |
 | 10–11 | LE uint16 | **Cell Voltage MIN (0.5 mV)** | Min cell group voltage. Always ~4–8 less than MAX (~2–4 mV). |
@@ -170,8 +211,9 @@ Battery → 00 80 16 10 00 03 00 00 00 F7 95 04 1E FC 1D 16 15 16 3D 12 00 00 00
 | 13 | uint8 | **NTC Temperature AVG (°C)** | AVG of 2x 10K NTC sensors, value is directly °C |
 | 14 | uint8 | **TH002 Temperature (°C)** | MOSFET temperature sensor (next to MOSFETs), value is directly °C |
 | 15 | uint8 | **SOC (%)** | **Confirmed**: actual state of charge percentage |
-| 16–17 | | | Context-dependent | Charger: offset 16 = charge counter (resets each session). Motor: 0x90 0x01 (constant, purpose unknown) |
-| 18 | uint8 | ? | Charger: always 0x00. Motor: usually 0x01, increases during riding (seen 0x1C=28 under load) — possibly current-related |
+| 16 | uint8 | ChgCtr / MotorConst-lo | Charger: charge counter (0–32+, resets per session). Motor: always **0x90** (= register 0xAA byte 0) |
+| 17 | uint8 | MotorConst-hi | Charger: 0x00. Motor: always **0x01** (= register 0xAA byte 1) |
+| 18 | uint8 | **Current / Load Indicator** | Charger: 0x00. Motor: ~0x01 idle, climbs to 0x1C (28) under load — likely discharge-current proxy |
 | 19–21 | | | Reserved | Always `00 00 00` |
 
 #### Voltage & SOC observations
@@ -263,11 +305,17 @@ These appear on CH1 (battery side) and repeat at ~1 second intervals.
 
 ## State Transitions
 
-```
-State 0x00 (Init)       → First telemetry after charger connects
-State 0x02 (Precharge?) → Brief transition state
-State 0x03 (Charging)   → Steady state during active charging
-```
+State byte values (telemetry offset 2):
+
+| State | Name | Context | Notes |
+|-------|------|---------|-------|
+| 0x00 | Init | Both | Initial state after handshake / first telemetry |
+| 0x01 | Active | Motor mode | Set after motor's first ready poll (`03 31 00 00`); MOSFETs open for discharge to motor |
+| 0x02 | Precharge | Charger mode | Brief transition state; charger detected, BMS gating in current |
+| 0x03 | Charging | Charger mode | Steady-state charge; MOSFETs open for charge from charger |
+
+Charger mode flow: `Init → Precharge → Charging` (steady polls keep state=Charging).
+Motor mode flow: `Init → Active` (single transition on first ready-poll, stays Active until shutdown).
 
 ## Charge Current Measurement
 
@@ -325,26 +373,41 @@ Captured 2026-03-29 with BT-E6000 in bike frame, communicating with motor (DU-E6
 
 ### Differences from Charger
 
-| Feature | Charger (EC-E6002) | Motor/Display |
+| Feature | Charger (EC-E6002) | Motor/Display (DU-E6012) |
 |---------|-------------------|---------------|
-| Poll payload bytes 1–2 | Always `00 00` | `02 02` (boot), `03 03` (ready) |
-| Telemetry State (offset 2) | 0x00/0x02/0x03 | 0x01 (Active) |
-| Telemetry offset 16–17 | Charge counter (0–32) | `90 01` (constant) |
+| Handshake sender | `00 4X` seq=any | `00 40` seq=0 (typically) |
+| Poll payload bytes 1–2 | Always `00 00` | `02 02` (boot), `03 31` (first ready), `03 05` (steady) |
+| Telemetry State (offset 2) | 0x00/0x02/0x03 (Init→Pre→Chg) | 0x00 (Init) → 0x01 (Active) |
+| Telemetry offset 16–17 | Charge counter (0–32) / 0x00 | `90 01` (constant, = register 0xAA) |
 | Telemetry offset 18 | Always 0x00 | 0x01 idle, up to 0x1C under load |
-| Startup commands | 0x30 (auth), 0x31 (specs) | 0x11, 0x32, 0x21 |
+| Auth flavor | `02 01 ...` (cmd 0x30 payload[1..2]) | `03 02 00 00 ...` |
+| Startup commands | 0x30 (auth), 0x31 (specs) | 0x30 (auth), 0x11 (DevInfo), 0x32 (Trip) |
+| Shutdown command | — | 0x21 (sent on display power-off) |
 | Telemetry rate | Every poll | Every poll |
+| Frame burst pattern | Frames glued in 2 bursts (HS+Auth, then Specs+Polls) | Each frame as separate UART transmission |
 
 ### Startup Sequence (Motor/Display)
 
+Motor sends each frame as a separate UART transmission (not bursted). Battery typically initiates with its own Ping; motor responds with Pong then proceeds.
+
 ```
-1. Handshake:     R2: 00 41 00 F9 50  →  R: 00 C1 00 35 DC
-2. Init Poll:     R2: 00 02 05 10 02 02 00 00 C2 97     (State=0x02, boot)
-3. Cmd 0x11 req:  R2: 00 00 01 11 1C DE                  (device info request, 1 byte)
-4. Cmd 0x11 resp: R:  00 80 09 11 00 29 00 C3 01 00 00 5D 72 8B  (9-byte response)
-5. Cmd 0x32:      R:  00 81 02 32 00 A1 FD               (battery sends 2-byte 0x32)
-6. Steady polls:  R2: 00 03 05 10 03 03 00 00 70 4E      (State=0x03, ready)
-7. Telemetry:     R:  00 83 16 10 00 01 00 00 00 ...     (State=0x01, Active)
+1. Battery → 00 C0 00 ED C5                                                          (battery Ping, seq=0)
+2. Motor   → 00 40 00 21 49                                                          (motor Pong, seq=0)
+3. Motor   → 00 01 11 30 03 02 00 00 X0 X1 X2 X3 Y0 Y1 X0 X1 X2 X3 Z0 Z1 CRC1 CRC2  (Auth-Req, motor flavor)
+4. Battery → 00 81 12 30 00 [16 bytes cryptographic response] CRC1 CRC2              (Auth-Resp)
+5. Battery → 00 82 16 10 00 00 00 00 00 ... CRC1 CRC2                                (first Status, State=Init)
+6. Motor   → 00 02 05 10 02 02 00 00 C2 97                                           (Boot Poll, payload 02 02 00 00)
+7. Battery → 00 83 09 11 00 2A 00 CE 01 00 00 5D CRC1 CRC2                           (DevInfo-Resp)
+8. Motor   → 00 03 01 11 78 31                                                       (DevInfo-Req — sometimes appears AFTER battery's resp)
+9. Battery → 00 80 16 10 00 01 00 00 00 ... 90 01 03 ... CRC1 CRC2                   (Status with State=01 Active)
+10. Motor  → 00 00 05 10 03 31 00 00 08 D5                                           (first Ready Poll, payload 03 31 00 00)
+11. Battery→ 00 81 02 32 00 A1 FD                                                    (Battery sends Trip request, 2-byte payload)
+12. Motor  → 00 01 07 32 1A 05 06 11 3A 36 BB 47                                     (Trip-Req, 6-byte payload)
+13. Motor  → 00 02 05 10 03 05 00 00 7C 07                                           (Steady Ready Poll, payload 03 05 00 00)
+... continues with poll/response cycle every ~1 second ...
 ```
+
+**Order observation**: the motor sometimes interleaves frames (e.g., DevInfo-Req arrives after battery already sent DevInfo-Resp). The battery responds independently to each request as it processes them. The protocol is event-driven, not strict request-response.
 
 ### Shutdown Sequence
 
@@ -369,13 +432,19 @@ This exchange happens once at startup, after the initial boot poll.
 
 #### Cmd 0x32 — Trip/Config (variable length)
 
-Bidirectional exchange, appears periodically:
+Bidirectional exchange, appears during normal motor operation:
 ```
-R:  00 81 02 32 00 A1 FD                        Battery→Motor (2 bytes: 32 00)
-R2: 00 02 07 32 1A 03 1D 0F 17 18 29 67         Motor→Battery (7 bytes)
-R:  00 82 02 32 00 6C D8                        Battery→Motor (2 bytes: 32 00)
+R:  00 81 02 32 00 A1 FD                        Battery→Motor (2-byte payload: 32 00 = trip request from battery)
+R2: 00 02 07 32 1A 03 1D 0F 17 18 29 67         Motor→Battery (7-byte payload: 32 + 6 data bytes)
+R:  00 82 02 32 00 6C D8                        Battery→Motor (Trip-Resp / ack)
 ```
-The 7-byte motor payload (`32 1A 03 1D 0F 17 18`) may contain date/time or trip data.
+
+The 6-byte motor data payload (after cmd 0x32 echo) varies between sessions:
+- Session A: `1A 03 1D 0F 17 18`
+- Session B: `1A 05 06 11 3A 36`
+- Session C: `1A 05 07 12 36 17`
+
+First byte (`0x1A` = 26) is constant across all observed sessions — possibly day-of-month or a frame-type marker. Remaining 5 bytes change. Hypothesis: timestamp (date+time) but exact field layout unconfirmed.
 
 #### Cmd 0x21 — Shutdown (Length=1 request, Length=3 response)
 
@@ -413,8 +482,9 @@ Captured 2026-04-03 with a defective BT-E6001 battery connected to EC-E6002 char
 |-------------|--------------------|-----------------------|
 | Handshake response | Immediate | 3 retries before response |
 | Charger poll byte 1 | Always `00` | `04` initially, then `00` after handshake |
-| Telemetry offset 1 | Always `0x00` | `0x10` in first response (fault flag?) |
-| Telemetry offset 3–5 | Always `00 00 00` | `00 02 05` (1st) / `00 02 00` (2nd) |
+| Status / Fault Byte (offset 1) | 0x00 (OK) | **0x10 (BMS-Lockout)** in first response |
+| Cell Connection Flag (offset 4) | 0x00 (OK) | **0x02 (No-Cell-Conn)** |
+| Reserved offset 5 | 0x00 | 0x05 (1st response) / 0x00 (later) |
 | Pack voltage (offset 6–7) | 38200–38400 mV | **0 mV** |
 | Cell V MAX/MIN (offset 8–11) | 3820–3840 mV | **0 mV** |
 | NTC MAX / AVG / TH003 (offset 12–14) | 20–39°C | 25°C / 25°C / 25°C (all normal) |
@@ -438,9 +508,10 @@ BT-E6000 (healthy, for comparison):
 
 | Field | BT-E6001 (defective) | BT-E6000 (healthy) |
 |-------|----------------------|--------------------|
-| Offset 1 | **0x10** (1st) / 0x00 (2nd) | 0x00 (always) |
+| Status / Fault Byte (offset 1) | **0x10 (BMS-Lockout)** (1st) / 0x00 (2nd) | 0x00 (always) |
 | State (offset 2) | 0x00 → 0x02 | 0x00 → 0x02 |
-| Offset 3–5 | **`00 02 05`** / **`00 02 00`** | `00 00 00` (always) |
+| Cell Connection (offset 4) | **0x02 (No-Cell-Conn)** | 0x00 (always) |
+| Reserved (offset 5) | 0x05 / 0x00 | 0x00 (always) |
 | PackV (offset 6–7) | **0 mV** | 38321 mV / 38330 mV |
 | MaxV (offset 8–9) | **0** | 3834 mV / 3834 mV |
 | MinV (offset 10–11) | **0** | 3830 mV / 3832 mV |
@@ -448,16 +519,19 @@ BT-E6000 (healthy, for comparison):
 | NTC AVG (offset 13) | 25°C | 26°C |
 | TH002/TH003 (offset 14) | 25°C | 27°C |
 | SOC (offset 15) | 29% (EEPROM) | 62% |
-| Charge ctr (offset 16) | 0 / 0 | 0 / 1 |
+| ChgCtr (offset 16) | 0 / 0 | 0 / 1 |
 
 ### Diagnosis
 
 1. **Pack voltage = 0 mV**: The BMS has disconnected the cells from the output (MOSFET protection active). The voltage measurement point is after the FETs.
 2. **Temperature sensors all normal** (25°C at room temperature) — no sensor fault.
-3. **Offset 1 = 0x10**: Likely a **fault/error flag**. Only seen in first telemetry, clears to 0x00 in subsequent responses. Bit 4 set — could indicate specific fault type.
-4. **Offset 3–5 = `00 02 xx`**: Persistent 0x02 at offset 4, never seen with BT-E6000. Offset 5 changes between responses (0x05 → 0x00). Possibly **fault code** or **error state**.
-5. **SOC = 29%**: Likely an EEPROM-stored value from before the fault occurred. Without cell voltage measurement, the BMS cannot calculate live SOC.
-6. **Charger poll byte 1 = 0x04**: The charger sends 0x04 when the handshake failed (3 retries without response). After successful handshake, reverts to 0x00. Possible meaning: error recovery / retry mode.
+3. **Status / Fault Byte (offset 1) = 0x10**: BMS-Lockout flag. Only seen in first telemetry, clears to 0x00 in subsequent responses.
+4. **Cell Connection Flag (offset 4) = 0x02**: cells reported as disconnected — confirmed indicator of BMS lockout state. Never seen with BT-E6000 healthy. Independently confirmed by michielvg's cellless PCB scan (same 0x02 in cmd 0x10 response without cells physically connected).
+5. **Offset 5 = `05` then `00`**: secondary status byte that changes over the session. Possibly a sub-state or retry counter related to the lockout state.
+6. **SOC = 29%**: Likely an EEPROM-stored value from before the fault occurred. Without cell voltage measurement, the BMS cannot calculate live SOC.
+7. **Charger poll byte 1 = 0x04**: The charger sends 0x04 when the handshake failed (3 retries without response). After successful handshake, reverts to 0x00. Possible meaning: error recovery / retry mode.
+
+The combination of fault byte 0x10 + cell-conn flag 0x02 + Vbat=0 is a consistent fingerprint for "BMS has latched cells out of the output path" — same pattern observed both with the defective BT-E6001 and with michielvg's cellless PCB scan.
 
 ### Possible Root Causes
 
@@ -504,8 +578,9 @@ Commands that return `<cmd> 01` = "command unknown" (not listed). Timeouts also 
 | Value | Meaning | Seen in |
 |-------|---------|---------|
 | 0x00 | OK / normal | BT-E6000 healthy (our captures), 0xA0+ commands |
-| 0x10 | Fault (BMS lockout?) | BT-E6001 defective (our captures) |
-| 0x12 | ? | 0x30, 0x32 commands |
+| 0x10 | BMS-Lockout (cells disconnected, FETs off) | BT-E6001 defective; combined with cell-conn flag 0x02 at offset 4 |
+| 0x12 | ? | 0x30, 0x32 commands (older capture) |
+| 0x15 | Auth-Failed / Degraded mode | Simulator boot without valid Auth-Req replay; battery still answers but refuses Active state |
 | 0x25 | No cells connected | michielvg's PCB scan (0x10–0x21) |
 
 **Offset 4 = 0x02 confirmed as "no cell connection":** michielvg's cellless PCB shows the same `0x02` at offset 4 in 0x10 telemetry as our defective BT-E6001. This is a hardware fault indicator, not a protocol version difference.
@@ -518,20 +593,18 @@ Commands that return `<cmd> 01` = "command unknown" (not listed). Timeouts also 
 
 ## Open Questions
 
-- **Cmd 0x30 authentication**: What crypto algorithm? Shared key in battery EEPROM? Can cloned batteries be detected?
+- **Cmd 0x30 authentication algorithm**: What crypto algorithm generates the X/Y/Z fields in motor Auth-Req and the 16-byte Auth-Resp? Battery has a shared secret it uses to validate; without firmware reverse engineering the algorithm is unknown. The motor does not validate the response, so authentication appears one-way (battery validates motor).
 - **Cmd 0x31 specifications**: What are offsets 10–17 in the response? Max current, voltage limits, cycle count?
 - **Cmd 0x31 value 414/415 vs 421/425**: Remaining vs design capacity in Wh? How are the charger's request values derived?
 - **Cmd 0x11 payload**: What do the 9 response bytes represent? Battery model, capacity, firmware version?
-- **Cmd 0x12** (10 bytes): New command, purpose unknown
+- **Cmd 0x12**: Appears in some motor startup sequences (e.g., gregyedlik recording). Purpose unknown.
 - **Cmd 0x13** (32 bytes): Large response — calibration data? Cell configuration?
 - **Cmd 0x20** (3 bytes): New command, purpose unknown
 - **Cmd 0xA0** (43 bytes): Largest response — extended diagnostics? Individual cell data?
 - **Cmd 0xA6/0xA7** (7 bytes each): Contain ASCII fragments ("VRK", "URK") — serial number?
-- **Cmd 0x32 payload**: What is the 7-byte motor→battery payload? Date/time? Trip data? Odometer?
-- **Offset 18**: Increases to 0x1C (28) during riding — is this discharge current in some unit?
-- **Offset 16–17 in motor mode**: Constant `0x90 0x01` — likely the value of register 0xAA (see command scan)
-- **Poll payload bytes 1–2**: Motor sends 0x02/0x03 — assist mode? System state? Does byte 2 change with assist level (ECO/TRAIL/BOOST)?
-- **Status byte pattern**: 0x00=OK, 0x10=BMS fault, 0x12=?, 0x25=no cells — is this a bitfield or enumeration?
+- **Cmd 0x32 payload format**: First byte is consistently 0x1A across sessions; remaining 5 bytes change. Date/time? Odometer fragments? Trip metadata?
+- **Status / Fault Byte values**: 0x00 / 0x10 / 0x15 / 0x25 confirmed. Is this a bitfield (each bit = a fault category) or an enumeration? Bit 0x05 appears in 0x15 but not 0x10 — suggests bitfield.
+- **Poll payload bytes 1–2 mode bytes**: Motor sends `02 02` (boot), `03 31` (first ready), `03 05` (steady), `03 03` (gregyedlik early), `03 01` (gregyedlik late). The second byte may encode assist level or system substate but mapping not confirmed.
 - **Charge counter non-linear**: Jumps from 1→14→32 in ~3 polls. Not a simple per-poll increment. What triggers the jumps?
 
 
@@ -650,3 +723,16 @@ Short on/off cycle, same as test 1. Multiple handshake retries visible at startu
 Defective BT-E6001 battery. Charger connects but battery reports 0V pack voltage. Charging never starts (stuck at Precharge). See [BT-E6001 Fault Analysis](#bt-e6001-fault-analysis--battery-reports-0v-charging-fails) for full decode.
 
 [Full log](logs/2026-04-03_bt-e6001_charger_fault.log)
+
+### 2026-05-07 — Bike on/off cycles + ECO ride + assist mode toggling (52% SOC, ~22°C)
+
+BT-E6000 in bike. Multiple display power on/off cycles, brief ECO-mode ride, manual assist mode toggling on the display (OFF / ECO / MAX). First capture with the new ESP32 logger using length-based frame parsing — every motor frame appears as a separate UART transmission, revealing that motor frames are NOT bursted (an artifact of the older gap-based parser).
+
+Key findings from this capture:
+- Motor sends each frame as a discrete UART transmission with brief inter-frame gaps
+- Auth-Req payload follows structure `[03 02 00 00] [X4][Y2][X4][Z2]` with X-block repeating
+- Two distinct Auth-Req captures with different X/Y/Z values from the same battery (one per session)
+- First ready poll uses `03 31 00 00`, then transitions to `03 05 00 00` for steady state
+- Trip-Req payload starts with `0x1A` consistently across sessions
+
+[Full log](logs/2026-05-07_test_with_bike_onoff.log)
