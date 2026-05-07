@@ -58,6 +58,8 @@ int sim_last_send = 0;
 int sim_boot = 0;        // 1 = boot poll (02 02), 0 = ready (03 31)
 int wake_step = 0;       // 0 = idle, >0 = wake state machine running
 int wake_step_t = 0;     // millis() when current step started
+int shut_step = 0;       // 1 = shutdown was sent, waiting to drive line LOW
+int shut_step_t = 0;
 int wake_got_c0 = 0;     // set by processCH1 when battery sends handshake Ping (0xC0..0xC3)
 int wake_got_auth = 0;   // set by processCH1 when battery sends Auth-Resp (cmd=0x30 from battery)
 int wake_mode = 0;       // 0 = motor (separate frames + fresh auth), 1 = charger
@@ -69,7 +71,7 @@ char stn[8];
 char raw_log[2000];
 char dec_log[1600];
 char tmp[2000];
-char ver[]="2026-05-07 19:19";
+char ver[]="2026-05-07 20:09";
 
 int raw_lines = 0;
 int dec_lines = 0;
@@ -706,6 +708,15 @@ void EveryLoop() {
         simSendPoll();
         sim_last_send = now;
     }
+
+    // Post-shutdown: drive GPIO18 to GND so BMS wake-latch releases
+    if (shut_step == 1 && (now - shut_step_t) >= 200) {
+        if (h1 >= 0) { serialClose(h1); h1 = -1; }
+        gpioInit(CH2_RX_PIN, 3);       // OUTPUT
+        digitalWrite(CH2_RX_PIN, 0);   // LOW
+        addLog("Shutdown: GPIO18 driven LOW (BMS sleep)");
+        shut_step = 0;
+    }
 }
 
 void WebUI() {
@@ -785,6 +796,7 @@ void Command(char cmd[]) {
         }
     } else if (strFind(cmd, "WAKEC") >= 0) {
         if (opt_mode == 1) {
+            if (h1 < 0) applyMode(opt_mode);  // re-init serial if previous shutdown left line LOW
             sim_boot = 0;
             sim_charger = 1;
             sim_seq = 0;
@@ -798,6 +810,7 @@ void Command(char cmd[]) {
         }
     } else if (strFind(cmd, "WAKE") >= 0) {
         if (opt_mode == 1) {
+            if (h1 < 0) applyMode(opt_mode);
             sim_boot = 0;
             sim_charger = 0;
             sim_seq = 0;
@@ -829,7 +842,9 @@ void Command(char cmd[]) {
     } else if (strFind(cmd, "SHUT") >= 0) {
         if (opt_mode == 1) {
             simSendShutdown();
-            responseCmnd("{\"SH\":\"shutdown\"}");
+            shut_step = 1;
+            shut_step_t = millis();
+            responseCmnd("{\"SH\":\"shutdown — line goes LOW in 200ms\"}");
         } else {
             responseCmnd("{\"SH\":\"not in sim mode\"}");
         }
