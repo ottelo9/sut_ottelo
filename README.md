@@ -3,6 +3,11 @@ Fork of https://github.com/michielvg/sut with enhancements and ESP32 (Tasmota Ti
 
 For details/ installation see original fork!  
 
+Links:  
+- https://github.com/michielvg
+- https://github.com/michielvg/Shimano_BT-E6000_BMS/discussions
+- https://github.com/gregyedlik/BT-E60xx
+
 # Features I have added to Rpi Script
 ## Dual-Channel Sniffing
 
