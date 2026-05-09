@@ -135,6 +135,7 @@ duckdb :memory: -c "SELECT * FROM read_ndjson_auto('data/2026/03/28.ndjson') LIM
 ```
 
 ## ESP32 TinyC Variant — `Tasmota-TinyC/ShimanoSniffer.tc`
+<img width="300" height="600" alt="image" src="https://github.com/user-attachments/assets/54052b46-3a37-4dec-b321-ce6dc8b0748c" />
 
 A second implementation runs on an ESP32 with [Tasmota TinyC](https://github.com/gemu2015/Sonoff-Tasmota/tree/universal/tasmota/tinyc) for standalone, network-connected operation (no Pi needed). The same Shimano protocol decoder, plus three operating modes selectable from a Tasmota web UI:
 
