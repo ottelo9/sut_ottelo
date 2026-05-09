@@ -282,6 +282,28 @@ Or run an ad-hoc query:
 duckdb :memory: -c "SELECT * FROM read_ndjson_auto('data/2026/03/28.ndjson') LIMIT 10;"
 ```
 
+## ESP32 TinyC Variant — `Tasmota-TinyC/ShimanoSniffer.tc`
+
+A second implementation runs on an ESP32 with [Tasmota TinyC](https://github.com/gemu2015/Sonoff-Tasmota/tree/universal/tasmota/tinyc) for standalone, network-connected operation (no Pi needed). The same Shimano protocol decoder, plus three operating modes selectable from a Tasmota web UI:
+
+| Mode | Behavior |
+|------|----------|
+| **Sniffer** | Passive dual-channel capture on GPIO18 (charger/motor TX) and GPIO19 (battery TX). Logs decoded frames live, optionally to flash file `/shimano.log`. |
+| **Simulator** | ESP32 acts as motor or charger. One click on `[Sim-Motor]` runs the full wake sequence (cold-wake handshake bursts → Auth replay → Boot Poll → DevInfo → First Ready → Trip → continuous steady polling). `[Sim-Charger]` does the equivalent for charger mode. `[Shutdown]` cleanly powers the BMS down. **Verified to release the discharge MOSFETs on BT-E6000 without bike or charger present.** |
+| **Sim-BMS** | ESP32 impersonates the battery, responds to motor/charger requests with configurable fake telemetry (SOC, Vbat). Useful for testing motor/display behavior without an actual battery. |
+
+### Hardware
+
+ESP32 dev board, 3 wires to the battery connector (GND, B-TX → GPIO19, B-RX → GPIO18). Recommended: 5 kΩ pull-up on GPIO19 to 3.3V (stable UART idle when battery disconnected) and 5 kΩ pull-down on GPIO18 to GND (prevents accidental BMS wake while sniffing).
+
+### Critical implementation detail
+
+The BMS validates inter-byte UART timing during Auth — bytes must arrive with ~1-3 ms gaps. The TinyC code sends each byte via `serialWriteByte` with `delayMicroseconds(2500)` between calls. Sending whole frames via `serialWriteBytes(buf, len)` (back-to-back) is silently rejected by the BMS even with valid CRCs, returning a degraded `30 12` Auth-Resp and flipping fault byte to `0x15` after ~8s. See [docs/protocol_analysis.md](docs/protocol_analysis.md) for the full protocol decode.
+
+### Deploy
+
+Flash a Tasmota-TinyC build onto an ESP32 (instructions: gemu2015 repo above), then upload `Tasmota-TinyC/ShimanoSniffer.tc` via Tasmota's file manager. Restart, open the device's web UI, and the Shimano page appears in the menu.
+
 ## Notes
 
 Requires Python 3.8+

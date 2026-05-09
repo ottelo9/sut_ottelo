@@ -10,7 +10,11 @@
 #   [13..14] Cell Vmin  (raw/2 = mV)
 #   [15..17] NTC max / NTC avg / MOSFET temp (deg C)
 #   [18]     SOC (%)
-#   [19..21] Charger: ChgCtr/00/00 — Motor: 90 01 / current-load
+#   [19..21] Charger: ChgCtr/00/00 — Motor: 90 01 / discharge-current-raw
+#
+# Motor discharge current (offset 18 in payload, byte[21] in raw frame):
+#   I_mA = 43 * byte + 58  (two-point calibration on BT-E6000, 2026-05-09)
+#   Datapoints: byte=11 → 531 mA, byte=6 → 316 mA
 #
 # Polls (cmd 0x10 length=5) — payload byte[4]/[5]:
 #   00 00  Charger          | 04 ..  Charger init/retry
@@ -19,6 +23,11 @@
 #   03 03  Motor (greg early)| 03 01  Motor steady (greg late)
 #
 # Auth (cmd 0x30): 02 01 = Charger flavor, 03 02 = Motor flavor.
+#   Static replay of bytes captured from a real motor session works (battery
+#   accepts → State=Active → MOSFETs released). Random bytes with the same
+#   X/Y/X/Z structure are silently rejected. Inter-byte UART timing on the
+#   sender side must include ~1-3 ms gaps — sending all bytes back-to-back
+#   gets rejected (returns 2-byte degraded response, fault flips to 0x15).
 # Cmd 0x12: Unknown command from gregyedlik's replay sequence.
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -192,7 +201,9 @@ function Parse-ShimanoMessage([string]$rawLine) {
         $null = $fields.Add(@{N="SOC"; V="$soc %"; S=18; E=18; C=$FIELD_COLORS["soc"]})
         if ($isMotor) {
             $null = $fields.Add(@{N="Motor Const (90 01)"; V="$("{0:X2}" -f $b19) $("{0:X2}" -f $b20)"; S=19; E=20; C=$FIELD_COLORS["chgctr"]})
-            $null = $fields.Add(@{N="Current/Load Indicator"; V="$b21 (0x$("{0:X2}" -f $b21))"; S=21; E=21; C=$FIELD_COLORS["current"]})
+            # Calibration 2026-05-09 (linear two-point): I_mA = 43 * byte[18] + 58
+            $iMa = $b21 * 43 + 58
+            $null = $fields.Add(@{N="Discharge Current"; V="${iMa} mA (raw=$b21, formula 43*x+58)"; S=21; E=21; C=$FIELD_COLORS["current"]})
         } else {
             $null = $fields.Add(@{N="Charge Counter"; V="$b19"; S=19; E=19; C=$FIELD_COLORS["chgctr"]})
             $null = $fields.Add(@{N="Reserved 20"; V="0x$("{0:X2}" -f $b20)"; S=20; E=20; C=$g})
@@ -389,10 +400,13 @@ function Decode-ShimanoLine([string]$line) {
             $cellStr = "Vmax=$vMax Vmin=$vMin"
             $tempStr = "T=$ntcMax/$ntcAvg/${th002}C"
 
-            # Distinguish motor (90 01 + current) vs charger (ChgCtr) context
+            # Distinguish motor (90 01 + current) vs charger (ChgCtr) context.
+            # Motor current calibration (2026-05-09 two-point linear fit on BT-E6000):
+            #   I_mA = 43 * byte[18] + 58  (datapoints: 11→531mA, 6→316mA)
             $isMotor = ($state -eq 0x01) -or ($b16 -eq 0x90 -and $b17 -eq 0x01)
             if ($isMotor) {
-                $extra = " | MotorConst=$("{0:X2}" -f $b16) $("{0:X2}" -f $b17) Current/Load=$b18"
+                $iMa = $b18 * 43 + 58
+                $extra = " | MotorConst=$("{0:X2}" -f $b16) $("{0:X2}" -f $b17) I=${iMa}mA (raw=$b18)"
             } else {
                 $extra = " | ChgCtr=$b16 b17=$("{0:X2}" -f $b17) b18=$("{0:X2}" -f $b18)"
             }
