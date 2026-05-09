@@ -71,7 +71,7 @@ char stn[8];
 char raw_log[2000];
 char dec_log[1600];
 char tmp[2000];
-char ver[]="2026-05-09 17:24";
+char ver[]="2026-05-09 17:30";
 
 int raw_lines = 0;
 int dec_lines = 0;
@@ -770,10 +770,13 @@ void WebUI() {
     webSend(" <a href='javascript:void(0)' onclick=\"document.getElementById('rl').textContent='';document.getElementById('dl').textContent='';fetch('/cm?cmnd=SHClr')\" style='font-size:11px'>[Clear Log]</a>");
     webSend(" <a href='javascript:void(0)' onclick=\"if(confirm('Delete shimano.log?')){fetch('/ufsd?delete=/shimano.log&download=/')}\" style='font-size:11px'>[Delete shimano.log]</a>");
     if (opt_mode == 1) {
-        webSend("<br>");
-        webSend(" <a href='javascript:void(0)' onclick=\"fetch('/cm?cmnd=SHSimm')\" style='font-size:12px;font-weight:bold'>[Sim-Motor]</a>");
-        webSend(" <a href='javascript:void(0)' onclick=\"fetch('/cm?cmnd=SHSimc')\" style='font-size:12px;font-weight:bold'>[Sim-Charger]</a>");
-        webSend(" <a href='javascript:void(0)' onclick=\"fetch('/cm?cmnd=SHShut')\" style='font-size:12px'>[Shutdown]</a>");
+        webSend("<div style='margin-top:6px;font-size:12px;line-height:1.6'>");
+        webSend("<a href='javascript:void(0)' onclick=\"fetch('/cm?cmnd=SHSimm')\" style='font-weight:bold'>[Sim-Motor]</a>");
+        webSend(" <span style='color:#888'>— Simulate a Shimano Motor (activate the battery → release voltage)</span><br>");
+        webSend("<a href='javascript:void(0)' onclick=\"fetch('/cm?cmnd=SHSimc')\" style='font-weight:bold'>[Sim-Charger]</a>");
+        webSend(" <span style='color:#888'>— Simulate a Shimano Charger (charge the battery with any 42V power supply)</span><br>");
+        webSend("<a href='javascript:void(0)' onclick=\"fetch('/cm?cmnd=SHShut')\">[Shutdown]</a>");
+        webSend("</div>");
     }
 
     webSend("<div style='width:100%;height:350px;overflow-y:auto;display:flex;flex-direction:column-reverse;border:1px solid #555'>");
