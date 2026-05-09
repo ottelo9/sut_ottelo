@@ -71,7 +71,7 @@ char stn[8];
 char raw_log[2000];
 char dec_log[1600];
 char tmp[2000];
-char ver[]="2026-05-09 16:46";
+char ver[]="2026-05-09 17:24";
 
 int raw_lines = 0;
 int dec_lines = 0;
@@ -214,22 +214,31 @@ void simSendFirstReady() {
     sim_seq++;
 }
 
-// Charger Burst 1: Handshake(seq=1) + Auth-Req `02 01 ...` (27 bytes from user's charger capture)
+// Charger Burst 1: HS-Pong (seq=1) + Auth-Req `02 01 ...` — sent as TWO separate
+// UART transmissions with ~80ms gap, mimicking the real charger's behavior.
+// Bytes captured from user's actual BT-E6000 + real Shimano charger session 2026-05-09.
 void simSendChgBurst1() {
     if (h1 < 0) return;
-    int b1[27];
-    b1[0]=0x00;  b1[1]=0x41;  b1[2]=0x00;  b1[3]=0xF9;  b1[4]=0x50;
-    b1[5]=0x00;  b1[6]=0x02;  b1[7]=0x11;  b1[8]=0x30;
-    b1[9]=0x02;  b1[10]=0x01;
-    b1[11]=0x29; b1[12]=0x3B; b1[13]=0x73; b1[14]=0x48;
-    b1[15]=0xB3; b1[16]=0xBE; b1[17]=0xF2; b1[18]=0xCA;
-    b1[19]=0xC7; b1[20]=0x40; b1[21]=0xAB; b1[22]=0xB1;
-    b1[23]=0xB2; b1[24]=0x06;
-    b1[25]=0xC0; b1[26]=0x20;
+    // Frame 1: HS-Pong (5 bytes, seq=1)
+    sim_buf[0]=0x00; sim_buf[1]=0x41; sim_buf[2]=0x00; sim_buf[3]=0xF9; sim_buf[4]=0x50;
+    simWriteTimed(5);
+    simLogTx(5);
+
+    delay(80);  // inter-frame gap before Auth-Req (BMS rejects burst-glued HS+Auth)
+
+    // Frame 2: Auth-Req (22 bytes, sender 0x00 + seq 2, cmd 0x30, charger flavor 02 01)
+    int b[22];
+    b[0]=0x00;  b[1]=0x02;  b[2]=0x11;  b[3]=0x30;
+    b[4]=0x02;  b[5]=0x01;
+    b[6]=0x86;  b[7]=0xBB;  b[8]=0xD2;  b[9]=0x62;
+    b[10]=0xAF; b[11]=0x75; b[12]=0x42; b[13]=0x0E;
+    b[14]=0x82; b[15]=0x4B; b[16]=0x93; b[17]=0xF0;
+    b[18]=0x3C; b[19]=0x06;
+    b[20]=0xBF; b[21]=0x95;
     int i = 0;
-    while (i < 27) { sim_buf[i] = b1[i]; i++; }
-    simWriteTimed(27);
-    simLogTx(27);
+    while (i < 22) { sim_buf[i] = b[i]; i++; }
+    simWriteTimed(22);
+    simLogTx(22);
 }
 
 // Charger Burst 2: Specs-Req (static, identical across sessions per md)

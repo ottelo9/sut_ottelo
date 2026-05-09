@@ -446,6 +446,30 @@ A standalone microcontroller (ESP32 with TinyC firmware) can fully impersonate t
 
 This procedure was originally demonstrated by [gregyedlik/BT-E60xx](https://github.com/gregyedlik/BT-E60xx) on a Raspberry Pi using `pyserial` with byte-by-byte transmission timing. We independently verified the same approach on ESP32 after diagnosing why a naive batch-write port failed (the inter-byte timing requirement).
 
+### Charger Simulation Without Real Charger (verified 2026-05-09)
+
+A separate ESP32 mode can impersonate the **charger** instead of the motor, bringing the BMS into Charging state and releasing the MOSFETs to accept current from any external CC/CV power supply (no real Shimano EC-E6002 charger needed). Verified on BT-E6000 with a 41.5 V bench supply: state went `Init → Pre → Chg`, Vbat climbed visibly through the IR-drop path, ChgCtr (offset 16) incremented.
+
+**Recipe:**
+
+1. **Hardware**: ESP32 wired as in motor simulation (GPIO18→B-RX, GPIO19→B-TX, GND→GND), plus external CC/CV power supply (set 41.5 V, 1-2 A current limit) wired to the battery's main + and − contacts.
+
+2. **Auth-Req payload**: capture the real charger's Auth-Req bytes by sniffing a single live charger session on the same battery. Bytes from a different battery (or the same battery from a much older session) are rejected. The Auth-Req must be sent as the second of two **separate UART transmissions** with an ~80 ms gap after the HS-Pong:
+   - Frame 1: HS-Pong `00 41 00 F9 50` (5 bytes, sender 0x40 + seq=1)
+   - **Wait 80 ms**
+   - Frame 2: Auth-Req `00 02 11 30 02 01 [16 captured payload bytes] CRC1 CRC2` (22 bytes, sender 0x00 + seq=2)
+   
+   Sending HS+Auth as a single 27-byte burst — even with correct inter-byte timing — gets the Auth-Req silently ignored (battery only ACKs the HS as `00 C1 00 35 DC`). The BMS uses inter-frame gap as a structural validator beyond per-byte timing.
+
+3. **Specs-Req (static, identical across sessions)**: `00 03 0B 31 9E 01 A5 01 01 00 05 00 10 00 A9 BC` — battery responds with the 18-byte Specs-Resp.
+
+4. **Steady polling**: `00 SEQ 05 10 00 00 00 00 CRC` every ~1 s. Once the external voltage is detected, state advances `0x00 (Init) → 0x02 (Pre) → 0x03 (Chg)` within 1-2 polls. ChgCtr in offset 16 increments non-linearly (typically 0 → ~16 → ~32 within a few polls).
+
+**Critical implementation details (in addition to motor-mode requirements):**
+- **HS-Pong and Auth-Req must be separate UART transmissions** with ~80 ms inter-frame gap — combined-burst sending silently fails Auth even with valid bytes.
+- **Charger Auth-Req is per-battery**, not universal. Each battery requires its own captured Auth-Req bytes (likely a per-battery key or per-session nonce). Static replay across batteries fails.
+- External voltage at the charger contacts must exceed Vbat by enough to drive current — empirically a 41.5 V supply against a ~37 V pack is sufficient. With supply at or below Vbat the BMS sees no charge source and won't transition state.
+
 ### Shutdown Sequence
 
 ```
@@ -760,6 +784,12 @@ Short on/off cycle, same as test 1. Multiple handshake retries visible at startu
 Defective BT-E6001 battery. Charger connects but battery reports 0V pack voltage. Charging never starts (stuck at Precharge). See [BT-E6001 Fault Analysis](#bt-e6001-fault-analysis--battery-reports-0v-charging-fails) for full decode.
 
 [Full log](logs/2026-04-03_bt-e6001_charger_fault.log)
+
+### 2026-05-09 — BT-E6000 + real Shimano charger live capture (51% SOC, ~22°C)
+
+Sniffer-mode capture of the actual EC-E6002 charger connecting to the user's BT-E6000. Shows the full charger startup sequence with **fresh** Auth-Req bytes that this specific battery accepts. The Auth-Req payload `02 01 86 BB D2 62 AF 75 42 0E 82 4B 93 F0 3C 06` triggered a valid 18-byte Auth-Resp from the battery. State transitions are visible: Init (frame 491) → Pre (494) → Chg (497+) with charge counter incrementing 0 → 02 → 1D → 20 → 21. Used as the reference Auth-Req payload for the ESP32 simulator's Sim-Charger mode.
+
+[Full log](logs/2026-05-09_bt-e6000_charger.log)
 
 ### 2026-05-07 — Bike on/off cycles + ECO ride + assist mode toggling (52% SOC, ~22°C)
 
